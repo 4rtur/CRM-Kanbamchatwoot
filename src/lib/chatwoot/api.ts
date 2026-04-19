@@ -28,14 +28,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error('Chatwoot não configurado. Acesse Configurações para definir URL, token e conta.')
   }
 
-  const baseUrl = config.url.replace(/\/$/, '')
-  const url = `${baseUrl}/api/v1/accounts/${config.accountId}${path}`
+  // Remove barra inicial para montar a rota do proxy
+  const cleanPath = path.startsWith('/') ? path.slice(1) : path
+  const url = `/api/chatwoot/${cleanPath}`
 
   const response = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      api_access_token: config.apiToken,
+      'x-chatwoot-url': config.url,
+      'x-chatwoot-token': config.apiToken,
+      'x-chatwoot-account-id': config.accountId,
       ...options.headers,
     },
   })

@@ -59,16 +59,14 @@ export default function SettingsPage() {
     setTestError('')
 
     try {
-      const baseUrl = url.replace(/\/$/, '')
-      const response = await fetch(
-        `${baseUrl}/api/v1/accounts/${accountId}/agents`,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            api_access_token: apiToken,
-          },
+      const response = await fetch('/api/chatwoot/agents', {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-chatwoot-url': url,
+          'x-chatwoot-token': apiToken,
+          'x-chatwoot-account-id': accountId,
         },
-      )
+      })
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
