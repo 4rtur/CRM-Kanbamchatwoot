@@ -28,19 +28,107 @@ import Link from 'next/link'
 import { useTheme } from '@/lib/theme'
 import type { CrmProduct } from '@/lib/chatwoot/types'
 
-const CATEGORIES = ['Tela', 'Bateria', 'Placa', 'Dados', 'Acessório', 'Outro'] as const
+const DEFAULT_CATEGORIES = ['Tela', 'Bateria', 'Placa', 'Dados', 'Acessório', 'Outro']
 
-const CATEGORY_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  Tela: { bg: 'bg-blue-500/10 dark:bg-blue-500/15', text: 'text-blue-600 dark:text-blue-400', border: 'border-blue-500/20' },
-  Bateria: { bg: 'bg-green-500/10 dark:bg-green-500/15', text: 'text-green-600 dark:text-green-400', border: 'border-green-500/20' },
-  Placa: { bg: 'bg-purple-500/10 dark:bg-purple-500/15', text: 'text-purple-600 dark:text-purple-400', border: 'border-purple-500/20' },
-  Dados: { bg: 'bg-amber-500/10 dark:bg-amber-500/15', text: 'text-amber-600 dark:text-amber-400', border: 'border-amber-500/20' },
-  Acessório: { bg: 'bg-pink-500/10 dark:bg-pink-500/15', text: 'text-pink-600 dark:text-pink-400', border: 'border-pink-500/20' },
-  Outro: { bg: 'bg-zinc-500/10 dark:bg-zinc-500/15', text: 'text-zinc-600 dark:text-zinc-400', border: 'border-zinc-500/20' },
+const COLOR_PALETTE = [
+  { bg: 'bg-blue-500/10 dark:bg-blue-500/15', text: 'text-blue-600 dark:text-blue-400', border: 'border-blue-500/20', hex: '#3b82f6' },
+  { bg: 'bg-green-500/10 dark:bg-green-500/15', text: 'text-green-600 dark:text-green-400', border: 'border-green-500/20', hex: '#22c55e' },
+  { bg: 'bg-purple-500/10 dark:bg-purple-500/15', text: 'text-purple-600 dark:text-purple-400', border: 'border-purple-500/20', hex: '#a855f7' },
+  { bg: 'bg-amber-500/10 dark:bg-amber-500/15', text: 'text-amber-600 dark:text-amber-400', border: 'border-amber-500/20', hex: '#f59e0b' },
+  { bg: 'bg-pink-500/10 dark:bg-pink-500/15', text: 'text-pink-600 dark:text-pink-400', border: 'border-pink-500/20', hex: '#ec4899' },
+  { bg: 'bg-cyan-500/10 dark:bg-cyan-500/15', text: 'text-cyan-600 dark:text-cyan-400', border: 'border-cyan-500/20', hex: '#06b6d4' },
+  { bg: 'bg-red-500/10 dark:bg-red-500/15', text: 'text-red-600 dark:text-red-400', border: 'border-red-500/20', hex: '#ef4444' },
+  { bg: 'bg-indigo-500/10 dark:bg-indigo-500/15', text: 'text-indigo-600 dark:text-indigo-400', border: 'border-indigo-500/20', hex: '#6366f1' },
+  { bg: 'bg-teal-500/10 dark:bg-teal-500/15', text: 'text-teal-600 dark:text-teal-400', border: 'border-teal-500/20', hex: '#14b8a6' },
+  { bg: 'bg-zinc-500/10 dark:bg-zinc-500/15', text: 'text-zinc-600 dark:text-zinc-400', border: 'border-zinc-500/20', hex: '#71717a' },
+]
+
+const STORAGE_KEY = 'chatwoot-crm-categories'
+
+function loadCategories(): string[] {
+  if (typeof window === 'undefined') return DEFAULT_CATEGORIES
+  const saved = localStorage.getItem(STORAGE_KEY)
+  if (saved) {
+    try { return JSON.parse(saved) } catch { return DEFAULT_CATEGORIES }
+  }
+  return DEFAULT_CATEGORIES
+}
+
+function saveCategories(cats: string[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(cats))
 }
 
 function getCategoryStyle(category: string) {
-  return CATEGORY_COLORS[category] ?? CATEGORY_COLORS['Outro']
+  const cats = loadCategories()
+  const index = cats.indexOf(category)
+  return COLOR_PALETTE[index >= 0 ? index % COLOR_PALETTE.length : COLOR_PALETTE.length - 1]
+}
+
+function CategoryManager({
+  categories,
+  onUpdate,
+}: {
+  categories: string[]
+  onUpdate: (cats: string[]) => void
+}) {
+  const [newCat, setNewCat] = useState('')
+
+  function handleAdd() {
+    const name = newCat.trim()
+    if (!name || categories.includes(name)) return
+    const updated = [...categories, name]
+    onUpdate(updated)
+    saveCategories(updated)
+    setNewCat('')
+  }
+
+  function handleRemove(cat: string) {
+    const updated = categories.filter((c) => c !== cat)
+    onUpdate(updated)
+    saveCategories(updated)
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground">
+        Adicione categorias personalizadas para organizar seus produtos. Cada cliente pode ter suas próprias categorias.
+      </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+        {categories.map((cat, i) => {
+          const style = COLOR_PALETTE[i % COLOR_PALETTE.length]
+          return (
+            <span
+              key={cat}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${style.bg} ${style.text}`}
+            >
+              <span className="size-2 rounded-full" style={{ backgroundColor: style.hex }} />
+              {cat}
+              <button
+                onClick={() => handleRemove(cat)}
+                className="ml-0.5 opacity-60 hover:opacity-100"
+                title={`Remover "${cat}"`}
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          )
+        })}
+      </div>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <Input
+          value={newCat}
+          onChange={(e) => setNewCat(e.target.value)}
+          placeholder="Nova categoria..."
+          className="text-sm"
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAdd() } }}
+        />
+        <Button size="sm" onClick={handleAdd} disabled={!newCat.trim() || categories.includes(newCat.trim())}>
+          <Plus className="size-3.5" data-icon="inline-start" />
+          Adicionar
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 function formatCurrency(value: number): string {
@@ -55,14 +143,16 @@ function ProductForm({
   initial,
   onSave,
   onCancel,
+  categories,
 }: {
   initial?: CrmProduct
   onSave: (product: CrmProduct) => void
   onCancel: () => void
+  categories: string[]
 }) {
   const [name, setName] = useState(initial?.name ?? '')
   const [price, setPrice] = useState(initial ? String(initial.price) : '')
-  const [category, setCategory] = useState(initial?.category ?? CATEGORIES[0])
+  const [category, setCategory] = useState(initial?.category ?? categories[0] ?? 'Outro')
   const [description, setDescription] = useState(initial?.description ?? '')
 
   function handleSubmit(e: React.FormEvent) {
@@ -109,7 +199,7 @@ function ProductForm({
             onChange={(e) => setCategory(e.target.value)}
             className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           >
-            {CATEGORIES.map((cat) => (
+            {categories.map((cat) => (
               <option key={cat} value={cat}>{cat}</option>
             ))}
           </select>
@@ -143,6 +233,8 @@ function ProdutosContent() {
   const [addOpen, setAddOpen] = useState(false)
   const [editProduct, setEditProduct] = useState<CrmProduct | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [catManagerOpen, setCatManagerOpen] = useState(false)
+  const [customCategories, setCustomCategories] = useState<string[]>(loadCategories)
 
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
@@ -199,6 +291,26 @@ function ProdutosContent() {
             </div>
 
             <div className="flex items-center gap-3">
+              <Dialog open={catManagerOpen} onOpenChange={setCatManagerOpen}>
+                <DialogTrigger
+                  render={
+                    <Button variant="outline" size="sm" onClick={() => setCatManagerOpen(true)}>
+                      <Package className="size-3.5" data-icon="inline-start" />
+                      Categorias ({customCategories.length})
+                    </Button>
+                  }
+                />
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Gerenciar Categorias</DialogTitle>
+                  </DialogHeader>
+                  <CategoryManager
+                    categories={customCategories}
+                    onUpdate={setCustomCategories}
+                  />
+                </DialogContent>
+              </Dialog>
+
               <Dialog open={addOpen} onOpenChange={setAddOpen}>
                 <DialogTrigger
                   render={
@@ -215,6 +327,7 @@ function ProdutosContent() {
                   <ProductForm
                     onSave={handleAdd}
                     onCancel={() => setAddOpen(false)}
+                    categories={customCategories}
                   />
                 </DialogContent>
               </Dialog>
@@ -356,6 +469,7 @@ function ProdutosContent() {
                             initial={editProduct}
                             onSave={handleEdit}
                             onCancel={() => setEditProduct(null)}
+                            categories={customCategories}
                           />
                         )}
                       </DialogContent>
