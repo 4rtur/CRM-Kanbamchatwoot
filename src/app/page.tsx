@@ -8,7 +8,8 @@ import { PipelineStats } from '@/components/kanban/pipeline-stats'
 import { FilterBar } from '@/components/filters/filter-bar'
 import { ToastContainer } from '@/components/ui/toast-container'
 import { Button } from '@/components/ui/button'
-import { Settings, RefreshCw, Kanban, BarChart3, RefreshCcw } from 'lucide-react'
+import { Settings, RefreshCw, Kanban, BarChart3, RefreshCcw, Sun, Moon } from 'lucide-react'
+import { useTheme } from '@/lib/theme'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
@@ -57,6 +58,7 @@ function RealtimeIndicator() {
 
 function CrmApp() {
   const { useMockData, refreshData, isLoading, isSyncing, syncConversations } = usePipelineStore()
+  const { theme, toggleTheme } = useTheme()
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -88,6 +90,14 @@ function CrmApp() {
           >
             <RefreshCcw className={`size-3.5 ${isSyncing ? 'animate-spin' : ''}`} data-icon="inline-start" />
             Sincronizar
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={toggleTheme}
+            title={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
+          >
+            {theme === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
           </Button>
           <Link href="/relatorios">
             <Button variant="ghost" size="sm">

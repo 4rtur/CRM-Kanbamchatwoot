@@ -1,11 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { PipelineProvider, usePipelineStore } from '@/lib/store/pipeline-store'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
-import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   ArrowLeft,
   Users,
@@ -14,28 +11,40 @@ import {
   Clock,
   BarChart3,
   Trophy,
-  ArrowDownRight,
   Timer,
+  ChevronDown,
   CalendarDays,
+  Sun,
+  Moon,
+  ArrowDown,
 } from 'lucide-react'
 import Link from 'next/link'
+import { useTheme } from '@/lib/theme'
 
 function formatCurrency(value: number): string {
-  return value.toLocaleString('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })
+  if (value >= 1000) {
+    return `R$ ${Math.round(value).toLocaleString('pt-BR')}`
+  }
+  return `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+}
+
+function formatCompact(value: number): string {
+  if (value >= 1_000_000) {
+    return `R$ ${(value / 1_000_000).toFixed(1).replace('.', ',')}M`
+  }
+  if (value >= 1_000) {
+    return `R$ ${(value / 1_000).toFixed(1).replace('.', ',')}k`
+  }
+  return `R$ ${value}`
 }
 
 type PeriodFilter = '7d' | '30d' | 'month' | 'all'
 
-const PERIOD_OPTIONS: { value: PeriodFilter; label: string }[] = [
-  { value: '7d', label: 'Últimos 7 dias' },
-  { value: '30d', label: 'Últimos 30 dias' },
-  { value: 'month', label: 'Este mês' },
-  { value: 'all', label: 'Todo período' },
+const PERIOD_OPTIONS: { value: PeriodFilter; label: string; short: string }[] = [
+  { value: '7d', label: 'Últimos 7 dias', short: '7 dias' },
+  { value: '30d', label: 'Últimos 30 dias', short: '30 dias' },
+  { value: 'month', label: 'Este mês', short: 'Este mês' },
+  { value: 'all', label: 'Todo período', short: 'Tudo' },
 ]
 
 interface AgentRanking {
@@ -46,67 +55,82 @@ interface AgentRanking {
   conversion: number
 }
 
-function DonutChart({
-  value,
-  total,
-  color,
-  label,
-  count,
-}: {
-  value: number
-  total: number
-  color: string
-  label: string
-  count: number
-}) {
-  const percentage = total > 0 ? Math.round((value / total) * 100) : 0
-  const circumference = 2 * Math.PI * 54
-  const strokeDashoffset = circumference - (percentage / 100) * circumference
+function AnimatedNumber({ value, suffix = '' }: { value: number; suffix?: string }) {
+  const [display, setDisplay] = useState(0)
+
+  useEffect(() => {
+    if (value === 0) {
+      setDisplay(0)
+      return
+    }
+    const duration = 600
+    const steps = 30
+    const stepTime = duration / steps
+    const increment = value / steps
+    let current = 0
+    let step = 0
+
+    const timer = setInterval(() => {
+      step++
+      current = Math.round(increment * step)
+      if (step >= steps) {
+        current = value
+        clearInterval(timer)
+      }
+      setDisplay(current)
+    }, stepTime)
+
+    return () => clearInterval(timer)
+  }, [value])
 
   return (
-    <div className="flex flex-col items-center gap-3">
-      <div className="relative size-32">
-        <svg className="size-full -rotate-90" viewBox="0 0 120 120">
-          <circle
-            cx="60"
-            cy="60"
-            r="54"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="10"
-            className="text-muted/20"
-          />
-          <circle
-            cx="60"
-            cy="60"
-            r="54"
-            fill="none"
-            stroke={color}
-            strokeWidth="10"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={strokeDashoffset}
-            className="transition-all duration-700 ease-out"
-          />
-        </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-2xl font-bold">{count}</span>
-          <span className="text-xs text-muted-foreground">{percentage}%</span>
-        </div>
-      </div>
-      <span className="text-sm font-medium" style={{ color }}>
-        {label}
-      </span>
-    </div>
+    <span className="tabular-nums">
+      {display.toLocaleString('pt-BR')}{suffix}
+    </span>
+  )
+}
+
+function AnimatedCurrency({ value }: { value: number }) {
+  const [display, setDisplay] = useState(0)
+
+  useEffect(() => {
+    if (value === 0) {
+      setDisplay(0)
+      return
+    }
+    const duration = 600
+    const steps = 30
+    const stepTime = duration / steps
+    const increment = value / steps
+    let current = 0
+    let step = 0
+
+    const timer = setInterval(() => {
+      step++
+      current = Math.round(increment * step)
+      if (step >= steps) {
+        current = value
+        clearInterval(timer)
+      }
+      setDisplay(current)
+    }, stepTime)
+
+    return () => clearInterval(timer)
+  }, [value])
+
+  return (
+    <span className="tabular-nums">{formatCurrency(display)}</span>
   )
 }
 
 function ReportsContent() {
   const { pipelines, cards } = usePipelineStore()
+  const { theme, toggleTheme } = useTheme()
   const [selectedPipelineId, setSelectedPipelineId] = useState(
     pipelines[0]?.id ?? '',
   )
   const [period, setPeriod] = useState<PeriodFilter>('all')
+  const [periodOpen, setPeriodOpen] = useState(false)
 
   const selectedPipeline = useMemo(
     () => pipelines.find((p) => p.id === selectedPipelineId),
@@ -232,38 +256,6 @@ function ReportsContent() {
       .sort((a, b) => b.value - a.value)
   }, [pipelineCards, selectedPipeline])
 
-  const funnelData = useMemo(() => {
-    if (!stats || !selectedPipeline) return []
-    const totalLeads = stats.totalLeads
-    let cumulativeCount = totalLeads
-
-    return selectedPipeline.stages.map((stage, index) => {
-      const stageCount = stats.stageStats[index]?.count ?? 0
-      const remainingAfter = cumulativeCount
-      cumulativeCount = cumulativeCount - stageCount
-      const percentOfTotal =
-        totalLeads > 0
-          ? Math.round((remainingAfter / totalLeads) * 100)
-          : 0
-
-      return {
-        stage,
-        count: stageCount,
-        percentOfTotal,
-        dropOff:
-          index > 0
-            ? totalLeads > 0
-              ? Math.round(
-                  ((stats.stageStats[index - 1]?.count ?? 0) - stageCount) /
-                    totalLeads *
-                    100,
-                )
-              : 0
-            : 0,
-      }
-    })
-  }, [stats, selectedPipeline])
-
   if (!selectedPipeline || !stats) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -276,160 +268,298 @@ function ReportsContent() {
     ...stats.stageStats.map((ss) => ss.count),
     1,
   )
+  const maxValue = Math.max(
+    ...stats.stageStats.map((s) => s.value),
+    1,
+  )
+  const maxDays = Math.max(
+    ...stats.stageStats.map((s) => s.avgDays),
+    1,
+  )
+
+  const selectedPeriodLabel = PERIOD_OPTIONS.find((o) => o.value === period)?.short ?? 'Tudo'
+
+  const kpiCards = [
+    {
+      label: 'Total de Leads',
+      value: stats.totalLeads,
+      type: 'number' as const,
+      icon: Users,
+      accent: 'blue',
+      borderColor: 'border-l-blue-500',
+      iconBg: 'bg-blue-500/10 dark:bg-blue-500/15',
+      iconColor: 'text-blue-600 dark:text-blue-400',
+      detail: `${stats.wonCards} ganhos`,
+    },
+    {
+      label: 'Valor Total',
+      value: stats.totalValue,
+      type: 'currency' as const,
+      icon: DollarSign,
+      accent: 'emerald',
+      borderColor: 'border-l-emerald-500',
+      iconBg: 'bg-emerald-500/10 dark:bg-emerald-500/15',
+      iconColor: 'text-emerald-600 dark:text-emerald-400',
+      detail: stats.totalLeads > 0 ? `${formatCompact(Math.round(stats.totalValue / stats.totalLeads))} / lead` : '',
+    },
+    {
+      label: 'Conversão',
+      value: stats.conversionRate,
+      type: 'percent' as const,
+      icon: TrendingUp,
+      accent: 'purple',
+      borderColor: 'border-l-purple-500',
+      iconBg: 'bg-purple-500/10 dark:bg-purple-500/15',
+      iconColor: 'text-purple-600 dark:text-purple-400',
+      detail: `${stats.wonCards} de ${stats.totalLeads}`,
+    },
+    {
+      label: 'Tempo Médio',
+      value: stats.avgDays,
+      type: 'days' as const,
+      icon: Clock,
+      accent: 'amber',
+      borderColor: 'border-l-amber-500',
+      iconBg: 'bg-amber-500/10 dark:bg-amber-500/15',
+      iconColor: 'text-amber-600 dark:text-amber-400',
+      detail: 'no funil',
+    },
+  ]
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
       {/* Header */}
-      <header className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div className="flex items-center gap-3">
-          <Link href="/">
-            <Button variant="ghost" size="icon-sm">
-              <ArrowLeft className="size-4" />
-            </Button>
-          </Link>
-          <div className="flex items-center gap-2">
-            <BarChart3 className="size-5 text-[#1F93FF]" />
-            <h1 className="text-base font-semibold">Relatórios</h1>
+      <header className="border-b border-border bg-background/80 backdrop-blur-sm sticky top-0 z-10">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Link href="/">
+                <Button variant="ghost" size="icon-sm" className="hover:bg-muted">
+                  <ArrowLeft className="size-4" />
+                </Button>
+              </Link>
+              <div>
+                <h1 className="text-lg font-bold tracking-tight">Relatórios</h1>
+                <p className="text-xs text-muted-foreground">Visão geral do desempenho comercial</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              {/* Period dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setPeriodOpen(!periodOpen)}
+                  className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                >
+                  <CalendarDays className="size-3.5 text-muted-foreground" />
+                  {selectedPeriodLabel}
+                  <ChevronDown className="size-3 text-muted-foreground" />
+                </button>
+                {periodOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setPeriodOpen(false)} />
+                    <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-lg border border-border bg-popover p-1 shadow-lg">
+                      {PERIOD_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => {
+                            setPeriod(opt.value)
+                            setPeriodOpen(false)
+                          }}
+                          className={`flex w-full items-center rounded-md px-3 py-2 text-xs transition-colors ${
+                            period === opt.value
+                              ? 'bg-accent text-accent-foreground font-medium'
+                              : 'text-foreground hover:bg-accent/50'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              {/* Theme toggle */}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={toggleTheme}
+                title={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
+              >
+                {theme === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+              </Button>
+            </div>
           </div>
-        </div>
 
-        {/* Period Filter */}
-        <div className="flex items-center gap-1 rounded-lg bg-muted/50 p-1">
-          {PERIOD_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setPeriod(opt.value)}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
-                period === opt.value
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+          {/* Pipeline pills */}
+          <div className="mt-4 flex items-center gap-1.5">
+            {pipelines.map((pipeline) => (
+              <button
+                key={pipeline.id}
+                onClick={() => setSelectedPipelineId(pipeline.id)}
+                className={`rounded-full px-4 py-1.5 text-xs font-medium transition-all ${
+                  selectedPipelineId === pipeline.id
+                    ? 'bg-foreground text-background shadow-sm'
+                    : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'
+                }`}
+              >
+                {pipeline.name}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
-      <div className="mx-auto w-full max-w-6xl px-4 py-6">
-        {/* Pipeline Tabs */}
-        <div className="mb-6">
-          <Tabs
-            value={selectedPipelineId}
-            onValueChange={setSelectedPipelineId}
-          >
-            <TabsList variant="line">
-              {pipelines.map((pipeline) => (
-                <TabsTrigger key={pipeline.id} value={pipeline.id}>
-                  {pipeline.name}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+      <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 py-6 space-y-6">
+        {/* KPI Cards */}
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+          {kpiCards.map((kpi) => {
+            const Icon = kpi.icon
+            return (
+              <div
+                key={kpi.label}
+                className={`group relative overflow-hidden rounded-xl border-l-[3px] ${kpi.borderColor} bg-card dark:bg-white/[0.03] dark:backdrop-blur-sm border border-border/50 dark:border-white/[0.06] p-4 lg:p-5 transition-all hover:shadow-md dark:hover:bg-white/[0.05]`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className={`flex size-8 items-center justify-center rounded-lg ${kpi.iconBg}`}>
+                    <Icon className={`size-4 ${kpi.iconColor}`} />
+                  </div>
+                  {kpi.detail && (
+                    <span className="text-[10px] font-medium text-muted-foreground">
+                      {kpi.detail}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-3">
+                  {kpi.type === 'currency' ? (
+                    <p className="text-2xl lg:text-3xl font-bold tracking-tight">
+                      <AnimatedCurrency value={kpi.value} />
+                    </p>
+                  ) : kpi.type === 'percent' ? (
+                    <p className="text-2xl lg:text-3xl font-bold tracking-tight">
+                      <AnimatedNumber value={kpi.value} suffix="%" />
+                    </p>
+                  ) : kpi.type === 'days' ? (
+                    <p className="text-2xl lg:text-3xl font-bold tracking-tight">
+                      <AnimatedNumber value={kpi.value} />
+                      <span className="ml-1 text-base font-normal text-muted-foreground">dias</span>
+                    </p>
+                  ) : (
+                    <p className="text-2xl lg:text-3xl font-bold tracking-tight">
+                      <AnimatedNumber value={kpi.value} />
+                    </p>
+                  )}
+                  <p className="mt-0.5 text-xs text-muted-foreground">{kpi.label}</p>
+                </div>
+              </div>
+            )
+          })}
         </div>
 
-        {/* Summary Cards - 2x2 Grid */}
-        <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-5">
-            <div className="flex items-center gap-2.5">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-blue-500/10">
-                <Users className="size-4 text-blue-400" />
-              </div>
-              <span className="text-xs font-medium text-muted-foreground">
-                Total Leads
-              </span>
-            </div>
-            <p className="mt-3 text-3xl font-bold tracking-tight">
-              {stats.totalLeads}
-            </p>
+        {/* Funnel Visualization */}
+        <div className="rounded-xl border border-border/50 dark:border-white/[0.06] bg-card dark:bg-white/[0.03] dark:backdrop-blur-sm p-5 lg:p-6">
+          <div className="mb-5 flex items-center gap-2">
+            <BarChart3 className="size-4 text-primary" />
+            <h3 className="text-sm font-semibold">Funil de Conversão</h3>
           </div>
+          <div className="space-y-1.5">
+            {stats.stageStats.map((ss, index) => {
+              const totalLeads = stats.totalLeads || 1
+              const widthPercent = Math.max((ss.count / maxLeadsInStage) * 100, 12)
+              const topWidth = Math.min(widthPercent + 4, 100)
+              const bottomWidth = Math.max(widthPercent - 4, 8)
+              const nextSs = stats.stageStats[index + 1]
+              const dropOff = nextSs
+                ? ss.count > 0
+                  ? Math.round(((ss.count - nextSs.count) / ss.count) * 100)
+                  : 0
+                : null
 
-          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
-            <div className="flex items-center gap-2.5">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-emerald-500/10">
-                <DollarSign className="size-4 text-emerald-400" />
-              </div>
-              <span className="text-xs font-medium text-muted-foreground">
-                Valor Total
-              </span>
-            </div>
-            <p className="mt-3 text-3xl font-bold tracking-tight">
-              {formatCurrency(stats.totalValue)}
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 p-5">
-            <div className="flex items-center gap-2.5">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-purple-500/10">
-                <TrendingUp className="size-4 text-purple-400" />
-              </div>
-              <span className="text-xs font-medium text-muted-foreground">
-                Conversão
-              </span>
-            </div>
-            <p className="mt-3 text-3xl font-bold tracking-tight">
-              {stats.conversionRate}%
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-5">
-            <div className="flex items-center gap-2.5">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-amber-500/10">
-                <Clock className="size-4 text-amber-400" />
-              </div>
-              <span className="text-xs font-medium text-muted-foreground">
-                Tempo Médio
-              </span>
-            </div>
-            <p className="mt-3 text-3xl font-bold tracking-tight">
-              {stats.avgDays}
-              <span className="text-lg font-normal text-muted-foreground">
-                {' '}
-                dias
-              </span>
-            </p>
-          </div>
-        </div>
-
-        {/* Funnel Chart + Won/Lost */}
-        <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {/* Funnel */}
-          <div className="rounded-xl border border-border bg-card p-5 lg:col-span-2">
-            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
-              <BarChart3 className="size-4 text-[#1F93FF]" />
-              Funil de Conversão
-            </h3>
-            <div className="space-y-3">
-              {stats.stageStats.map((ss) => {
-                const widthPercent = Math.max(
-                  (ss.count / maxLeadsInStage) * 100,
-                  6,
-                )
-                return (
-                  <div key={ss.stage.id} className="group">
-                    <div className="mb-1 flex items-center justify-between">
-                      <span className="text-xs font-medium">
+              return (
+                <div key={ss.stage.id}>
+                  <div className="relative group">
+                    <div
+                      className="relative overflow-hidden transition-all duration-500"
+                      style={{
+                        clipPath: `polygon(${(100 - topWidth) / 2}% 0%, ${(100 + topWidth) / 2}% 0%, ${(100 + bottomWidth) / 2}% 100%, ${(100 - bottomWidth) / 2}% 100%)`,
+                        height: '52px',
+                      }}
+                    >
+                      <div
+                        className="absolute inset-0 transition-opacity group-hover:opacity-100"
+                        style={{
+                          background: `linear-gradient(180deg, ${ss.stage.color}DD, ${ss.stage.color}99)`,
+                          opacity: 0.85,
+                        }}
+                      />
+                    </div>
+                    {/* Overlay text */}
+                    <div className="absolute inset-0 flex items-center justify-center gap-4 pointer-events-none">
+                      <span className="text-xs font-semibold text-white drop-shadow-sm">
                         {ss.stage.name}
                       </span>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <span>{ss.percentOfTotal}% do total</span>
-                        <span className="font-medium text-foreground">
-                          {formatCurrency(ss.value)}
+                      <span className="text-xs font-bold text-white drop-shadow-sm tabular-nums">
+                        {ss.count} leads
+                      </span>
+                      <span className="text-[10px] font-medium text-white/80 drop-shadow-sm tabular-nums">
+                        {ss.percentOfTotal}%
+                      </span>
+                      <span className="text-[10px] font-medium text-white/80 drop-shadow-sm tabular-nums">
+                        {formatCompact(ss.value)}
+                      </span>
+                    </div>
+                  </div>
+                  {/* Drop-off indicator */}
+                  {dropOff !== null && dropOff > 0 && (
+                    <div className="flex items-center justify-center gap-1.5 py-0.5">
+                      <ArrowDown className="size-3 text-red-400/70" />
+                      <span className="text-[10px] font-medium text-red-400/70 tabular-nums">
+                        -{dropOff}% drop-off
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Two-column: Conversion + Agent Ranking */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {/* Conversion by Stage */}
+          <div className="rounded-xl border border-border/50 dark:border-white/[0.06] bg-card dark:bg-white/[0.03] dark:backdrop-blur-sm p-5 lg:p-6">
+            <div className="mb-5 flex items-center gap-2">
+              <TrendingUp className="size-4 text-purple-500 dark:text-purple-400" />
+              <h3 className="text-sm font-semibold">Conversão por Etapa</h3>
+            </div>
+            <div className="space-y-4">
+              {stats.stageStats.map((ss) => {
+                return (
+                  <div key={ss.stage.id}>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="size-2 rounded-full"
+                          style={{ backgroundColor: ss.stage.color }}
+                        />
+                        <span className="text-xs font-medium">{ss.stage.name}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] tabular-nums text-muted-foreground">
+                          {formatCompact(ss.value)}
+                        </span>
+                        <span className="text-xs font-semibold tabular-nums">
+                          {ss.conversion}%
                         </span>
                       </div>
                     </div>
-                    <div className="relative h-9 w-full overflow-hidden rounded-lg bg-muted/20">
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-muted/30 dark:bg-white/[0.06]">
                       <div
-                        className="flex h-full items-center rounded-lg px-3 transition-all duration-700 ease-out"
+                        className="h-full rounded-full transition-all duration-700 ease-out"
                         style={{
-                          width: `${widthPercent}%`,
-                          background: `linear-gradient(90deg, ${ss.stage.color}CC, ${ss.stage.color}88)`,
+                          width: `${Math.max(ss.conversion, 2)}%`,
+                          backgroundColor: ss.stage.color,
                         }}
-                      >
-                        <span className="text-xs font-bold text-white drop-shadow-sm">
-                          {ss.count} leads
-                        </span>
-                      </div>
+                      />
                     </div>
                   </div>
                 )
@@ -437,197 +567,182 @@ function ReportsContent() {
             </div>
           </div>
 
-          {/* Won / Lost Donuts */}
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
-              <Trophy className="size-4 text-amber-400" />
-              Ganhos / Perdidos
-            </h3>
-            <div className="flex items-center justify-center gap-8 pt-4">
-              <DonutChart
-                value={stats.wonCards}
-                total={stats.totalLeads}
-                color="#22c55e"
-                label="Ganhos"
-                count={stats.wonCards}
-              />
-              <DonutChart
-                value={stats.lostCards}
-                total={stats.totalLeads}
-                color="#ef4444"
-                label="Perdidos"
-                count={stats.lostCards}
-              />
+          {/* Agent Ranking */}
+          <div className="rounded-xl border border-border/50 dark:border-white/[0.06] bg-card dark:bg-white/[0.03] dark:backdrop-blur-sm p-5 lg:p-6">
+            <div className="mb-5 flex items-center gap-2">
+              <Trophy className="size-4 text-amber-500 dark:text-amber-400" />
+              <h3 className="text-sm font-semibold">Ranking de Agentes</h3>
             </div>
-            <div className="mt-6 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-              <span>
-                Taxa de conversão:{' '}
-                <strong className="text-foreground">
-                  {stats.conversionRate}%
-                </strong>
+            {agentRankings.length === 0 ? (
+              <div className="flex items-center justify-center py-8">
+                <span className="text-xs text-muted-foreground">
+                  Nenhum agente atribuído neste pipeline.
+                </span>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {agentRankings.map((agent, index) => {
+                  const rankColors = [
+                    'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20',
+                    'bg-zinc-400/15 text-zinc-500 dark:text-zinc-400 border-zinc-400/20',
+                    'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/20',
+                  ]
+                  const rankClass = rankColors[index] ?? 'bg-muted/50 text-muted-foreground border-transparent'
+
+                  return (
+                    <div
+                      key={agent.name}
+                      className="flex items-center gap-3 rounded-lg border border-border/30 dark:border-white/[0.04] bg-muted/20 dark:bg-white/[0.02] p-3 transition-colors hover:bg-muted/40 dark:hover:bg-white/[0.04]"
+                    >
+                      <div
+                        className={`flex size-7 shrink-0 items-center justify-center rounded-md border text-[10px] font-bold ${rankClass}`}
+                      >
+                        {index + 1}
+                      </div>
+                      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted dark:bg-white/[0.08] text-[10px] font-bold">
+                        {agent.name
+                          .split(' ')
+                          .map((n) => n[0])
+                          .join('')
+                          .slice(0, 2)
+                          .toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-medium">{agent.name}</p>
+                        <p className="text-[10px] text-muted-foreground tabular-nums">
+                          {agent.leads} leads
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                          {formatCompact(agent.value)}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground tabular-nums">
+                          {agent.conversion}% conv.
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Bottom: Funnel Speed + Value Distribution */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {/* Funnel Speed */}
+          <div className="rounded-xl border border-border/50 dark:border-white/[0.06] bg-card dark:bg-white/[0.03] dark:backdrop-blur-sm p-5 lg:p-6">
+            <div className="mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Timer className="size-4 text-amber-500 dark:text-amber-400" />
+                <h3 className="text-sm font-semibold">Velocidade do Funil</h3>
+              </div>
+              <span className="text-xs text-muted-foreground tabular-nums">
+                Média total: <strong className="text-foreground">{stats.avgDays} dias</strong>
               </span>
             </div>
-          </div>
-        </div>
-
-        {/* Conversion Funnel Visualization (drop-off) */}
-        <div className="mb-8 rounded-xl border border-border bg-card p-5">
-          <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
-            <ArrowDownRight className="size-4 text-red-400" />
-            Funil de Drop-off entre Etapas
-          </h3>
-          <div className="flex items-center gap-0 overflow-x-auto pb-2">
-            {funnelData.map((item, index) => (
-              <div key={item.stage.id} className="flex items-center">
-                <div className="flex flex-col items-center gap-1.5">
-                  <div
-                    className="flex min-w-[100px] flex-col items-center rounded-lg border px-3 py-3"
-                    style={{
-                      borderColor: `${item.stage.color}44`,
-                      backgroundColor: `${item.stage.color}0D`,
-                    }}
-                  >
-                    <span
-                      className="text-lg font-bold"
-                      style={{ color: item.stage.color }}
-                    >
-                      {item.count}
-                    </span>
-                    <span className="text-[10px] font-medium text-muted-foreground">
-                      {item.stage.name}
-                    </span>
-                    <Badge variant="secondary" className="mt-1 text-[10px]">
-                      {item.percentOfTotal}%
-                    </Badge>
-                  </div>
-                </div>
-                {index < funnelData.length - 1 && (
-                  <div className="flex flex-col items-center px-2">
-                    <div className="h-px w-6 bg-border" />
-                    {item.dropOff > 0 || index > 0 ? (
-                      <span className="text-[10px] font-medium text-red-400">
-                        -{funnelData[index + 1]?.dropOff ?? 0}%
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-muted-foreground">
-                        &rarr;
-                      </span>
-                    )}
-                    <div className="h-px w-6 bg-border" />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Metrics Table + Value Distribution */}
-        <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {/* Metrics Table */}
-          <div className="rounded-xl border border-border bg-card lg:col-span-2">
-            <div className="border-b border-border px-5 py-3">
-              <h3 className="flex items-center gap-2 text-sm font-semibold">
-                <CalendarDays className="size-4 text-[#1F93FF]" />
-                Métricas por Etapa
-              </h3>
-            </div>
-            <div className="overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/20">
-                    <th className="px-5 py-2.5 text-left text-xs font-medium text-muted-foreground">
-                      Etapa
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">
-                      Leads
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">
-                      Valor
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">
-                      Conversão
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">
-                      Tempo Méd.
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats.stageStats.map((ss, index) => (
-                    <tr
-                      key={ss.stage.id}
-                      className={`border-b border-border/30 last:border-0 ${
-                        index % 2 === 0 ? 'bg-transparent' : 'bg-muted/10'
-                      }`}
-                    >
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-2.5">
+            <div className="relative">
+              {/* Timeline line */}
+              <div className="absolute left-[15px] top-2 bottom-2 w-px bg-border dark:bg-white/[0.08]" />
+              <div className="space-y-4">
+                {stats.stageStats.map((ss, index) => {
+                  const barWidth = Math.max((ss.avgDays / maxDays) * 100, 4)
+                  return (
+                    <div key={ss.stage.id} className="relative flex items-center gap-4 pl-9">
+                      {/* Timeline dot */}
+                      <div
+                        className="absolute left-[11px] size-2.5 rounded-full border-2 border-background"
+                        style={{ backgroundColor: ss.stage.color }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex items-center justify-between">
+                          <span className="text-xs font-medium truncate">{ss.stage.name}</span>
+                          <span className="text-xs font-semibold tabular-nums ml-2">
+                            {ss.avgDays} dias
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/30 dark:bg-white/[0.06]">
                           <div
-                            className="size-2.5 rounded-full"
-                            style={{ backgroundColor: ss.stage.color }}
+                            className="h-full rounded-full transition-all duration-700 ease-out"
+                            style={{
+                              width: `${barWidth}%`,
+                              background: `linear-gradient(90deg, ${ss.stage.color}CC, ${ss.stage.color}66)`,
+                            }}
                           />
-                          <span className="font-medium">{ss.stage.name}</span>
                         </div>
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium tabular-nums">
-                        {ss.count}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium tabular-nums text-emerald-400">
-                        {formatCurrency(ss.value)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2.5">
-                          <div className="h-1.5 w-14 overflow-hidden rounded-full bg-muted/30">
-                            <div
-                              className="h-full rounded-full transition-all duration-500"
-                              style={{
-                                width: `${ss.conversion}%`,
-                                backgroundColor: ss.stage.color,
-                              }}
-                            />
-                          </div>
-                          <span className="tabular-nums">{ss.conversion}%</span>
+                      </div>
+                      {index < stats.stageStats.length - 1 && (
+                        <div className="absolute left-[7px] top-full mt-0.5">
+                          <ArrowDown className="size-2.5 text-muted-foreground/40" />
                         </div>
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-                        {ss.avgDays}d
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           </div>
 
           {/* Value Distribution */}
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
-              <DollarSign className="size-4 text-emerald-400" />
-              Distribuição de Valor
-            </h3>
-            <div className="space-y-3">
+          <div className="rounded-xl border border-border/50 dark:border-white/[0.06] bg-card dark:bg-white/[0.03] dark:backdrop-blur-sm p-5 lg:p-6">
+            <div className="mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <DollarSign className="size-4 text-emerald-500 dark:text-emerald-400" />
+                <h3 className="text-sm font-semibold">Distribuição de Valor</h3>
+              </div>
+              <span className="text-xs text-muted-foreground tabular-nums">
+                Total: <strong className="text-foreground">{formatCurrency(stats.totalValue)}</strong>
+              </span>
+            </div>
+            {/* Stacked bar */}
+            <div className="mb-4 flex h-8 w-full overflow-hidden rounded-lg">
               {stats.stageStats.map((ss) => {
-                const maxValue = Math.max(
-                  ...stats.stageStats.map((s) => s.value),
-                  1,
+                const widthPercent = stats.totalValue > 0 ? (ss.value / stats.totalValue) * 100 : 0
+                if (widthPercent < 0.5) return null
+                return (
+                  <div
+                    key={ss.stage.id}
+                    className="relative h-full transition-all duration-700 group/bar first:rounded-l-lg last:rounded-r-lg"
+                    style={{
+                      width: `${widthPercent}%`,
+                      backgroundColor: ss.stage.color,
+                      opacity: 0.8,
+                    }}
+                    title={`${ss.stage.name}: ${formatCurrency(ss.value)}`}
+                  />
                 )
-                const widthPercent = Math.max(
-                  (ss.value / maxValue) * 100,
-                  4,
-                )
+              })}
+            </div>
+            {/* Legend */}
+            <div className="space-y-2.5">
+              {stats.stageStats.map((ss) => {
+                const percent = stats.totalValue > 0 ? Math.round((ss.value / stats.totalValue) * 100) : 0
+                const barWidth = Math.max((ss.value / maxValue) * 100, 4)
                 return (
                   <div key={ss.stage.id}>
-                    <div className="mb-1 flex items-center justify-between text-xs">
-                      <span className="font-medium">{ss.stage.name}</span>
-                      <span className="tabular-nums text-muted-foreground">
-                        {formatCurrency(ss.value)}
-                      </span>
+                    <div className="mb-1 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="size-2 rounded-full"
+                          style={{ backgroundColor: ss.stage.color }}
+                        />
+                        <span className="text-xs font-medium">{ss.stage.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] tabular-nums text-muted-foreground">
+                          {percent}%
+                        </span>
+                        <span className="text-xs font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                          {formatCurrency(ss.value)}
+                        </span>
+                      </div>
                     </div>
-                    <div className="h-5 w-full overflow-hidden rounded-md bg-muted/20">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/30 dark:bg-white/[0.06]">
                       <div
-                        className="h-full rounded-md transition-all duration-500"
+                        className="h-full rounded-full transition-all duration-500"
                         style={{
-                          width: `${widthPercent}%`,
+                          width: `${barWidth}%`,
                           backgroundColor: ss.stage.color,
                           opacity: 0.7,
                         }}
@@ -637,166 +752,6 @@ function ReportsContent() {
                 )
               })}
             </div>
-          </div>
-        </div>
-
-        {/* Lead Velocity + Top Agents */}
-        <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Lead Velocity */}
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
-              <Timer className="size-4 text-amber-400" />
-              Velocidade do Lead (tempo por etapa)
-            </h3>
-            <div className="space-y-3">
-              {stats.stageStats.map((ss, index) => {
-                const maxDays = Math.max(
-                  ...stats.stageStats.map((s) => s.avgDays),
-                  1,
-                )
-                const widthPercent = Math.max(
-                  (ss.avgDays / maxDays) * 100,
-                  4,
-                )
-                return (
-                  <div key={ss.stage.id} className="flex items-center gap-3">
-                    <div className="w-28 shrink-0">
-                      <span className="text-xs font-medium">
-                        {ss.stage.name}
-                      </span>
-                    </div>
-                    <div className="flex-1">
-                      <div className="h-6 w-full overflow-hidden rounded-md bg-muted/20">
-                        <div
-                          className="flex h-full items-center rounded-md px-2 transition-all duration-500"
-                          style={{
-                            width: `${widthPercent}%`,
-                            background: `linear-gradient(90deg, ${ss.stage.color}99, ${ss.stage.color}55)`,
-                          }}
-                        >
-                          <span className="text-[10px] font-bold text-white drop-shadow-sm">
-                            {ss.avgDays}d
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    {index < stats.stageStats.length - 1 && (
-                      <div className="w-12 shrink-0 text-right">
-                        <span className="text-[10px] text-muted-foreground">
-                          &darr;
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-              <Separator className="my-2" />
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">
-                  Tempo total médio
-                </span>
-                <span className="font-bold">{stats.avgDays} dias</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Top Agents Ranking */}
-          <div className="rounded-xl border border-border bg-card">
-            <div className="border-b border-border px-5 py-3">
-              <h3 className="flex items-center gap-2 text-sm font-semibold">
-                <Trophy className="size-4 text-amber-400" />
-                Ranking de Agentes
-              </h3>
-            </div>
-            {agentRankings.length === 0 ? (
-              <div className="flex items-center justify-center p-8">
-                <span className="text-xs text-muted-foreground">
-                  Nenhum agente atribuído neste pipeline.
-                </span>
-              </div>
-            ) : (
-              <div className="overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/20">
-                      <th className="px-5 py-2.5 text-left text-xs font-medium text-muted-foreground">
-                        #
-                      </th>
-                      <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">
-                        Agente
-                      </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">
-                        Leads
-                      </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">
-                        Valor
-                      </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">
-                        Conversão
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {agentRankings.map((agent, index) => (
-                      <tr
-                        key={agent.name}
-                        className={`border-b border-border/30 last:border-0 ${
-                          index % 2 === 0 ? 'bg-transparent' : 'bg-muted/10'
-                        }`}
-                      >
-                        <td className="px-5 py-3">
-                          <span
-                            className={`text-xs font-bold ${
-                              index === 0
-                                ? 'text-amber-400'
-                                : index === 1
-                                  ? 'text-zinc-400'
-                                  : index === 2
-                                    ? 'text-orange-400'
-                                    : 'text-muted-foreground'
-                            }`}
-                          >
-                            {index + 1}°
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2.5">
-                            <div className="flex size-7 items-center justify-center rounded-full bg-muted text-[10px] font-bold">
-                              {agent.name
-                                .split(' ')
-                                .map((n) => n[0])
-                                .join('')
-                                .slice(0, 2)
-                                .toUpperCase()}
-                            </div>
-                            <span className="font-medium">{agent.name}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums">
-                          {agent.leads}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums text-emerald-400">
-                          {formatCurrency(agent.value)}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <Badge
-                            variant={
-                              agent.conversion >= 50
-                                ? 'default'
-                                : agent.conversion >= 25
-                                  ? 'secondary'
-                                  : 'outline'
-                            }
-                          >
-                            {agent.conversion}%
-                          </Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         </div>
       </div>
