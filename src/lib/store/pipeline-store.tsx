@@ -1,0 +1,1168 @@
+'use client'
+
+import {
+  createContext,
+  useContext,
+  useCallback,
+  useMemo,
+  useState,
+  useEffect,
+  useRef,
+  type ReactNode,
+} from 'react'
+import type {
+  CrmPipeline,
+  CrmCard,
+  ChatwootContact,
+  ChatwootAgent,
+  ChatwootConversation,
+  CrmChecklistItem,
+  CrmNote,
+  CrmProduct,
+  CrmAutomationRule,
+} from '@/lib/chatwoot/types'
+import {
+  DEFAULT_PIPELINES,
+  MOCK_CONTACTS,
+  MOCK_AGENTS,
+  MOCK_LABELS,
+  MOCK_INBOXES,
+  MOCK_PRODUCTS,
+  getMockConversations,
+  getMockContactLastMessage,
+  getMockAssignedAgent,
+  getMockLabelsForContact,
+  getMockPriority,
+  getMockValue,
+  getMockProducts,
+} from '@/lib/chatwoot/mock-data'
+import { isConfigured, getChatwootConfig } from '@/lib/config'
+import {
+  listContacts,
+  listAgents as fetchAgents,
+  listLabels as fetchLabels,
+  listInboxes as fetchInboxes,
+  updateContactCustomAttributes,
+  updateContactLabels as apiUpdateContactLabels,
+  createContact as apiCreateContact,
+} from '@/lib/chatwoot/api'
+import type { ChatwootLabel, ChatwootInbox } from '@/lib/chatwoot/types'
+import { calculateLeadScore } from '@/lib/scoring'
+import { loadAutomations, saveAutomations, evaluateAutomations } from '@/lib/automations'
+import { fireWebhook } from '@/lib/webhooks'
+import { showToast } from '@/lib/toast'
+import {
+  initRealtime,
+  broadcastEvent,
+  isBroadcastChannelActive,
+  type RealtimeEvent,
+} from '@/lib/realtime'
+
+const PIPELINES_STORAGE_KEY = 'chatwoot-crm-pipelines'
+const CARDS_EXTRA_STORAGE_KEY = 'chatwoot-crm-cards-extra'
+const PRODUCTS_STORAGE_KEY = 'chatwoot-crm-products'
+const AUTO_MOVE_STORAGE_KEY = 'chatwoot-crm-auto-move'
+const ACCESS_CONTROL_STORAGE_KEY = 'chatwoot-crm-access-control'
+
+interface CardsExtraData {
+  [cardId: string]: {
+    checklist?: CrmChecklistItem[]
+    notes?: CrmNote[]
+    products?: string[]
+    priority?: CrmCard['priority']
+    value?: number
+    labels?: string[]
+  }
+}
+
+interface Filters {
+  agentId: number | null
+  labels: string[]
+  inboxId: number | null
+  searchQuery: string
+}
+
+interface AccessControl {
+  [pipelineId: string]: {
+    visibleTo: 'all' | number[]
+  }
+}
+
+interface PipelineStore {
+  pipelines: CrmPipeline[]
+  activePipelineId: string
+  cards: CrmCard[]
+  agents: ChatwootAgent[]
+  labels: ChatwootLabel[]
+  inboxes: ChatwootInbox[]
+  products: CrmProduct[]
+  automationRules: CrmAutomationRule[]
+  filters: Filters
+  isLoading: boolean
+  isSyncing: boolean
+  error: string | null
+  useMockData: boolean
+  autoMoveEnabled: boolean
+  accessControl: AccessControl
+
+  setActivePipeline: (id: string) => void
+  setFilters: (filters: Partial<Filters>) => void
+  clearFilters: () => void
+  moveCard: (cardId: string, toStageId: string) => void
+  addPipeline: (pipeline: CrmPipeline) => void
+  updatePipeline: (pipeline: CrmPipeline) => void
+  deletePipeline: (id: string) => void
+  refreshData: () => Promise<void>
+  updateCardChecklist: (cardId: string, checklist: CrmChecklistItem[]) => void
+  addCardNote: (cardId: string, note: CrmNote) => void
+  updateCardProducts: (cardId: string, productIds: string[]) => void
+  updateCardPriority: (cardId: string, priority: CrmCard['priority']) => void
+  updateCardValue: (cardId: string, value: number) => void
+  updateCardLabels: (cardId: string, labels: string[]) => void
+  addProduct: (product: CrmProduct) => void
+  updateProduct: (product: CrmProduct) => void
+  deleteProduct: (id: string) => void
+  addAutomationRule: (rule: CrmAutomationRule) => void
+  updateAutomationRule: (rule: CrmAutomationRule) => void
+  deleteAutomationRule: (id: string) => void
+  addCard: (card: CrmCard) => void
+  setAutoMoveEnabled: (enabled: boolean) => void
+  setAccessControl: (pipelineId: string, visibleTo: 'all' | number[]) => void
+  syncConversations: () => Promise<number>
+
+  activePipeline: CrmPipeline | undefined
+  filteredCards: CrmCard[]
+  chatwootUrl: string
+  chatwootAccountId: string
+  isRealtimeConnected: boolean
+  lastRealtimeEventAt: number | null
+}
+
+const PipelineContext = createContext<PipelineStore | null>(null)
+
+function loadPipelines(): CrmPipeline[] {
+  if (typeof window === 'undefined') return DEFAULT_PIPELINES
+  try {
+    const stored = localStorage.getItem(PIPELINES_STORAGE_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored) as CrmPipeline[]
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+    }
+  } catch {
+    // fallback to defaults
+  }
+  return DEFAULT_PIPELINES
+}
+
+function savePipelines(pipelines: CrmPipeline[]): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(PIPELINES_STORAGE_KEY, JSON.stringify(pipelines))
+}
+
+function loadCardsExtra(): CardsExtraData {
+  if (typeof window === 'undefined') return {}
+  try {
+    const stored = localStorage.getItem(CARDS_EXTRA_STORAGE_KEY)
+    if (stored) return JSON.parse(stored) as CardsExtraData
+  } catch {
+    // fallback
+  }
+  return {}
+}
+
+function saveCardsExtra(data: CardsExtraData): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(CARDS_EXTRA_STORAGE_KEY, JSON.stringify(data))
+}
+
+function loadProducts(): CrmProduct[] {
+  if (typeof window === 'undefined') return MOCK_PRODUCTS
+  try {
+    const stored = localStorage.getItem(PRODUCTS_STORAGE_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored) as CrmProduct[]
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+    }
+  } catch {
+    // fallback
+  }
+  return MOCK_PRODUCTS
+}
+
+function saveProducts(products: CrmProduct[]): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products))
+}
+
+function loadAutoMove(): boolean {
+  if (typeof window === 'undefined') return false
+  return localStorage.getItem(AUTO_MOVE_STORAGE_KEY) === 'true'
+}
+
+function saveAutoMove(enabled: boolean): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(AUTO_MOVE_STORAGE_KEY, String(enabled))
+}
+
+function loadAccessControl(): AccessControl {
+  if (typeof window === 'undefined') return {}
+  try {
+    const stored = localStorage.getItem(ACCESS_CONTROL_STORAGE_KEY)
+    if (stored) return JSON.parse(stored) as AccessControl
+  } catch {
+    // fallback
+  }
+  return {}
+}
+
+function saveAccessControl(data: AccessControl): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(ACCESS_CONTROL_STORAGE_KEY, JSON.stringify(data))
+}
+
+function buildMockCards(extraData: CardsExtraData): CrmCard[] {
+  return MOCK_CONTACTS.map((contact) => {
+    const pipelineId = (contact.custom_attributes.crm_pipeline as string) || 'vendas'
+    const stageId = (contact.custom_attributes.crm_stage as string) || 'novo'
+    const conversations = getMockConversations(contact.id)
+    const agent = getMockAssignedAgent(contact.id)
+    const labels = getMockLabelsForContact(contact.id)
+    const lastMessage = getMockContactLastMessage(contact.id)
+    const cardId = `card-${contact.id}`
+    const extra = extraData[cardId]
+
+    const card: CrmCard = {
+      id: cardId,
+      contactId: contact.id,
+      contact,
+      pipelineId,
+      stageId,
+      lastMessage,
+      lastMessageAt: contact.last_activity_at,
+      labels: extra?.labels ?? labels,
+      assignedAgent: agent,
+      conversations,
+      phone: contact.phone_number,
+      priority: extra?.priority ?? getMockPriority(contact.id),
+      value: extra?.value ?? getMockValue(contact.id),
+      checklist: extra?.checklist ?? [],
+      notes: extra?.notes ?? [],
+      products: extra?.products ?? getMockProducts(contact.id),
+      score: 0,
+    }
+
+    card.score = calculateLeadScore(card)
+    return card
+  })
+}
+
+async function buildLiveCards(contacts: ChatwootContact[], extraData: CardsExtraData): Promise<CrmCard[]> {
+  return contacts.map((contact) => {
+    const pipelineId = (contact.custom_attributes.crm_pipeline as string) || 'vendas'
+    const stageId = (contact.custom_attributes.crm_stage as string) || 'novo'
+    const cardId = `card-${contact.id}`
+    const extra = extraData[cardId]
+
+    const card: CrmCard = {
+      id: cardId,
+      contactId: contact.id,
+      contact,
+      pipelineId,
+      stageId,
+      lastMessage: null,
+      lastMessageAt: contact.last_activity_at,
+      labels: extra?.labels ?? [],
+      assignedAgent: null,
+      conversations: [],
+      phone: contact.phone_number,
+      priority: extra?.priority ?? 'media',
+      value: extra?.value ?? 0,
+      checklist: extra?.checklist ?? [],
+      notes: extra?.notes ?? [],
+      products: extra?.products ?? [],
+      score: 0,
+    }
+
+    card.score = calculateLeadScore(card)
+    return card
+  })
+}
+
+const EMPTY_FILTERS: Filters = {
+  agentId: null,
+  labels: [],
+  inboxId: null,
+  searchQuery: '',
+}
+
+export function PipelineProvider({ children }: { children: ReactNode }) {
+  const [pipelines, setPipelines] = useState<CrmPipeline[]>(DEFAULT_PIPELINES)
+  const [activePipelineId, setActivePipelineId] = useState('vendas')
+  const [cards, setCards] = useState<CrmCard[]>([])
+  const [agents, setAgents] = useState<ChatwootAgent[]>([])
+  const [labels, setLabels] = useState<ChatwootLabel[]>([])
+  const [inboxes, setInboxes] = useState<ChatwootInbox[]>([])
+  const [products, setProducts] = useState<CrmProduct[]>(MOCK_PRODUCTS)
+  const [automationRules, setAutomationRules] = useState<CrmAutomationRule[]>([])
+  const [filters, setFiltersState] = useState<Filters>(EMPTY_FILTERS)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [useMockData, setUseMockData] = useState(true)
+  const [cardsExtra, setCardsExtra] = useState<CardsExtraData>({})
+  const [autoMoveEnabled, setAutoMoveEnabledState] = useState(false)
+  const [accessControl, setAccessControlState] = useState<AccessControl>({})
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false)
+  const [lastRealtimeEventAt, setLastRealtimeEventAt] = useState<number | null>(null)
+  const suppressBroadcastRef = useRef(false)
+
+  const loadData = useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
+
+    const storedPipelines = loadPipelines()
+    setPipelines(storedPipelines)
+
+    const storedExtra = loadCardsExtra()
+    setCardsExtra(storedExtra)
+
+    const storedProducts = loadProducts()
+    setProducts(storedProducts)
+
+    const storedRules = loadAutomations()
+    setAutomationRules(storedRules)
+
+    const storedAutoMove = loadAutoMove()
+    setAutoMoveEnabledState(storedAutoMove)
+
+    const storedAccess = loadAccessControl()
+    setAccessControlState(storedAccess)
+
+    if (!isConfigured()) {
+      setUseMockData(true)
+      setCards(buildMockCards(storedExtra))
+      setAgents(MOCK_AGENTS)
+      setLabels(MOCK_LABELS)
+      setInboxes(MOCK_INBOXES)
+      setIsLoading(false)
+      return
+    }
+
+    setUseMockData(false)
+    try {
+      const [contactsResult, agentsResult, labelsResult, inboxesResult] = await Promise.all([
+        listContacts(1),
+        fetchAgents(),
+        fetchLabels(),
+        fetchInboxes(),
+      ])
+
+      const liveCards = await buildLiveCards(contactsResult.contacts, storedExtra)
+      setCards(liveCards)
+      setAgents(agentsResult)
+      setLabels(labelsResult)
+      setInboxes(inboxesResult)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao carregar dados do Chatwoot'
+      setError(message)
+      setUseMockData(true)
+      setCards(buildMockCards(storedExtra))
+      setAgents(MOCK_AGENTS)
+      setLabels(MOCK_LABELS)
+      setInboxes(MOCK_INBOXES)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadData()
+  }, [loadData])
+
+  // Inicializa o sistema de sincronização em tempo real entre abas
+  useEffect(() => {
+    setIsRealtimeConnected(isBroadcastChannelActive() || typeof window !== 'undefined')
+
+    const cleanup = initRealtime((event: RealtimeEvent) => {
+      setLastRealtimeEventAt(event.timestamp)
+      suppressBroadcastRef.current = true
+
+      try {
+        switch (event.type) {
+          case 'card_moved': {
+            const { cardId, toStageId } = event.payload as { cardId: string; toStageId: string }
+            setCards((prev) =>
+              prev.map((card) => {
+                if (card.id !== cardId) return card
+                return { ...card, stageId: toStageId }
+              }),
+            )
+            break
+          }
+          case 'card_added': {
+            const { card: newCard } = event.payload as { card: CrmCard }
+            setCards((prev) => {
+              if (prev.some((c) => c.id === newCard.id)) return prev
+              return [...prev, newCard]
+            })
+            break
+          }
+          case 'labels_changed': {
+            const { cardId, labels: newLabels } = event.payload as { cardId: string; labels: string[] }
+            setCards((prev) =>
+              prev.map((card) => {
+                if (card.id !== cardId) return card
+                return { ...card, labels: newLabels }
+              }),
+            )
+            const storedExtra = loadCardsExtra()
+            storedExtra[cardId as string] = { ...storedExtra[cardId as string], labels: newLabels }
+            setCardsExtra(storedExtra)
+            break
+          }
+          case 'note_added': {
+            const { cardId, note } = event.payload as { cardId: string; note: CrmNote }
+            setCards((prev) =>
+              prev.map((card) => {
+                if (card.id !== cardId) return card
+                return { ...card, notes: [...card.notes, note] }
+              }),
+            )
+            const storedExtra2 = loadCardsExtra()
+            const existing = storedExtra2[cardId as string]?.notes ?? []
+            storedExtra2[cardId as string] = { ...storedExtra2[cardId as string], notes: [...existing, note] }
+            setCardsExtra(storedExtra2)
+            break
+          }
+          case 'checklist_updated': {
+            const { cardId, checklist } = event.payload as { cardId: string; checklist: CrmChecklistItem[] }
+            setCards((prev) =>
+              prev.map((card) => {
+                if (card.id !== cardId) return card
+                return { ...card, checklist }
+              }),
+            )
+            const storedExtra3 = loadCardsExtra()
+            storedExtra3[cardId as string] = { ...storedExtra3[cardId as string], checklist }
+            setCardsExtra(storedExtra3)
+            break
+          }
+          case 'priority_changed': {
+            const { cardId, priority } = event.payload as { cardId: string; priority: CrmCard['priority'] }
+            setCards((prev) =>
+              prev.map((card) => {
+                if (card.id !== cardId) return card
+                return { ...card, priority }
+              }),
+            )
+            break
+          }
+          case 'value_changed': {
+            const { cardId, value } = event.payload as { cardId: string; value: number }
+            setCards((prev) =>
+              prev.map((card) => {
+                if (card.id !== cardId) return card
+                return { ...card, value }
+              }),
+            )
+            break
+          }
+          case 'products_changed': {
+            const { cardId, productIds } = event.payload as { cardId: string; productIds: string[] }
+            setCards((prev) =>
+              prev.map((card) => {
+                if (card.id !== cardId) return card
+                return { ...card, products: productIds }
+              }),
+            )
+            break
+          }
+          case 'pipeline_updated': {
+            const { pipeline } = event.payload as { pipeline: CrmPipeline }
+            setPipelines((prev) => {
+              const next = prev.map((p) => (p.id === pipeline.id ? pipeline : p))
+              savePipelines(next)
+              return next
+            })
+            break
+          }
+          case 'pipeline_added': {
+            const { pipeline } = event.payload as { pipeline: CrmPipeline }
+            setPipelines((prev) => {
+              if (prev.some((p) => p.id === pipeline.id)) return prev
+              const next = [...prev, pipeline]
+              savePipelines(next)
+              return next
+            })
+            break
+          }
+          case 'pipeline_deleted': {
+            const { pipelineId } = event.payload as { pipelineId: string }
+            setPipelines((prev) => {
+              const next = prev.filter((p) => p.id !== pipelineId)
+              savePipelines(next)
+              return next
+            })
+            break
+          }
+          case 'product_added': {
+            const { product } = event.payload as { product: CrmProduct }
+            setProducts((prev) => {
+              if (prev.some((p) => p.id === product.id)) return prev
+              const next = [...prev, product]
+              saveProducts(next)
+              return next
+            })
+            break
+          }
+          case 'product_updated': {
+            const { product } = event.payload as { product: CrmProduct }
+            setProducts((prev) => {
+              const next = prev.map((p) => (p.id === product.id ? product : p))
+              saveProducts(next)
+              return next
+            })
+            break
+          }
+          case 'product_deleted': {
+            const { productId } = event.payload as { productId: string }
+            setProducts((prev) => {
+              const next = prev.filter((p) => p.id !== productId)
+              saveProducts(next)
+              return next
+            })
+            break
+          }
+          case 'auto_move_changed': {
+            const { enabled } = event.payload as { enabled: boolean }
+            setAutoMoveEnabledState(enabled)
+            saveAutoMove(enabled)
+            break
+          }
+          case 'data_refreshed': {
+            loadData()
+            break
+          }
+        }
+      } finally {
+        suppressBroadcastRef.current = false
+      }
+    })
+
+    setIsRealtimeConnected(true)
+
+    return cleanup
+  }, [loadData])
+
+  const setActivePipeline = useCallback((id: string) => {
+    setActivePipelineId(id)
+  }, [])
+
+  const setFilters = useCallback((partial: Partial<Filters>) => {
+    setFiltersState((prev) => ({ ...prev, ...partial }))
+  }, [])
+
+  const clearFilters = useCallback(() => {
+    setFiltersState(EMPTY_FILTERS)
+  }, [])
+
+  const moveCard = useCallback(
+    (cardId: string, toStageId: string) => {
+      let fromStageName = ''
+      let toStageName = ''
+      let pipelineName = ''
+
+      setCards((prev) =>
+        prev.map((card) => {
+          if (card.id !== cardId) return card
+          if (card.stageId === toStageId) return card
+
+          const previousStageId = card.stageId
+          fromStageName = previousStageId
+          toStageName = toStageId
+          pipelineName = card.pipelineId
+
+          const updated = { ...card, stageId: toStageId }
+
+          const note: CrmNote = {
+            id: `note-${Date.now()}`,
+            text: `Movido para etapa: ${toStageId}`,
+            author: 'Sistema',
+            timestamp: new Date().toISOString(),
+            type: 'stage_change',
+          }
+          updated.notes = [...updated.notes, note]
+          updated.score = calculateLeadScore(updated)
+
+          const newExtra = { ...cardsExtra }
+          newExtra[cardId] = {
+            ...newExtra[cardId],
+            notes: updated.notes,
+          }
+          setCardsExtra(newExtra)
+          saveCardsExtra(newExtra)
+
+          const result = evaluateAutomations(automationRules, {
+            card: updated,
+            previousStageId,
+          })
+          if (result?.newStageId && result.newStageId !== toStageId) {
+            updated.stageId = result.newStageId
+          }
+          if (result?.newLabel && !updated.labels.includes(result.newLabel)) {
+            updated.labels = [...updated.labels, result.newLabel]
+          }
+
+          return updated
+        }),
+      )
+
+      // Broadcast para outras abas
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({
+          type: 'card_moved',
+          payload: { cardId, toStageId },
+        })
+      }
+
+      // Fire webhook
+      const card = cards.find((c) => c.id === cardId)
+      if (card) {
+        fireWebhook({
+          event: 'card.moved',
+          card: {
+            id: card.id,
+            contactId: card.contactId,
+            contactName: card.contact.name,
+            stageId: toStageId,
+          },
+          from_stage: fromStageName,
+          to_stage: toStageName,
+          pipeline: pipelineName,
+          timestamp: new Date().toISOString(),
+        })
+
+        showToast(`${card.contact.name} movido para nova etapa`, 'success')
+      }
+
+      if (card && !useMockData) {
+        updateContactCustomAttributes(card.contactId, {
+          ...card.contact.custom_attributes,
+          crm_stage: toStageId,
+        }).catch(() => {
+          setCards((prev) =>
+            prev.map((c) => {
+              if (c.id !== cardId) return c
+              return { ...c, stageId: card.stageId }
+            }),
+          )
+        })
+      }
+    },
+    [cards, useMockData, cardsExtra, automationRules],
+  )
+
+  const updateCardLabels = useCallback(
+    (cardId: string, newLabels: string[]) => {
+      const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], labels: newLabels } }
+      setCardsExtra(newExtra)
+      saveCardsExtra(newExtra)
+
+      setCards((prev) =>
+        prev.map((card) => {
+          if (card.id !== cardId) return card
+          const updated = { ...card, labels: newLabels }
+          updated.score = calculateLeadScore(updated)
+          return updated
+        }),
+      )
+
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({
+          type: 'labels_changed',
+          payload: { cardId, labels: newLabels },
+        })
+      }
+
+      const card = cards.find((c) => c.id === cardId)
+      if (card && !useMockData) {
+        apiUpdateContactLabels(card.contactId, newLabels).catch(() => {
+          // revert on failure
+        })
+      }
+
+      showToast('Labels atualizadas', 'success')
+    },
+    [cardsExtra, cards, useMockData],
+  )
+
+  const updateCardChecklist = useCallback(
+    (cardId: string, checklist: CrmChecklistItem[]) => {
+      const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], checklist } }
+      setCardsExtra(newExtra)
+      saveCardsExtra(newExtra)
+
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({
+          type: 'checklist_updated',
+          payload: { cardId, checklist },
+        })
+      }
+
+      setCards((prev) =>
+        prev.map((card) => {
+          if (card.id !== cardId) return card
+          const updated = { ...card, checklist }
+          updated.score = calculateLeadScore(updated)
+
+          if (checklist.length > 0 && checklist.every((item) => item.done)) {
+            const result = evaluateAutomations(automationRules, { card: updated })
+            if (result?.newStageId) {
+              updated.stageId = result.newStageId
+            }
+          }
+
+          return updated
+        }),
+      )
+    },
+    [cardsExtra, automationRules],
+  )
+
+  const addCardNote = useCallback(
+    (cardId: string, note: CrmNote) => {
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({
+          type: 'note_added',
+          payload: { cardId, note },
+        })
+      }
+
+      setCards((prev) =>
+        prev.map((card) => {
+          if (card.id !== cardId) return card
+          const newNotes = [...card.notes, note]
+          const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], notes: newNotes } }
+          setCardsExtra(newExtra)
+          saveCardsExtra(newExtra)
+          return { ...card, notes: newNotes }
+        }),
+      )
+    },
+    [cardsExtra],
+  )
+
+  const updateCardProducts = useCallback(
+    (cardId: string, productIds: string[]) => {
+      const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], products: productIds } }
+      setCardsExtra(newExtra)
+      saveCardsExtra(newExtra)
+
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({
+          type: 'products_changed',
+          payload: { cardId, productIds },
+        })
+      }
+
+      setCards((prev) =>
+        prev.map((card) => {
+          if (card.id !== cardId) return card
+          const updated = { ...card, products: productIds }
+          updated.score = calculateLeadScore(updated)
+          return updated
+        }),
+      )
+    },
+    [cardsExtra],
+  )
+
+  const updateCardPriority = useCallback(
+    (cardId: string, priority: CrmCard['priority']) => {
+      const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], priority } }
+      setCardsExtra(newExtra)
+      saveCardsExtra(newExtra)
+
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({
+          type: 'priority_changed',
+          payload: { cardId, priority },
+        })
+      }
+
+      setCards((prev) =>
+        prev.map((card) => {
+          if (card.id !== cardId) return card
+          return { ...card, priority }
+        }),
+      )
+    },
+    [cardsExtra],
+  )
+
+  const updateCardValue = useCallback(
+    (cardId: string, value: number) => {
+      const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], value } }
+      setCardsExtra(newExtra)
+      saveCardsExtra(newExtra)
+
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({
+          type: 'value_changed',
+          payload: { cardId, value },
+        })
+      }
+
+      setCards((prev) =>
+        prev.map((card) => {
+          if (card.id !== cardId) return card
+          return { ...card, value }
+        }),
+      )
+    },
+    [cardsExtra],
+  )
+
+  const addCard = useCallback(
+    (card: CrmCard) => {
+      setCards((prev) => [...prev, card])
+
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({
+          type: 'card_added',
+          payload: { card },
+        })
+      }
+
+      const newExtra = {
+        ...cardsExtra,
+        [card.id]: {
+          labels: card.labels,
+          priority: card.priority,
+          value: card.value,
+          notes: card.notes,
+          checklist: card.checklist,
+          products: card.products,
+        },
+      }
+      setCardsExtra(newExtra)
+      saveCardsExtra(newExtra)
+
+      if (!useMockData) {
+        apiCreateContact({
+          name: card.contact.name,
+          email: card.contact.email ?? undefined,
+          phone_number: card.contact.phone_number ?? undefined,
+        }).catch(() => {
+          // silently fail
+        })
+      }
+
+      showToast(`Lead "${card.contact.name}" adicionado`, 'success')
+
+      fireWebhook({
+        event: 'card.created',
+        card: {
+          id: card.id,
+          contactId: card.contactId,
+          contactName: card.contact.name,
+          stageId: card.stageId,
+        },
+        pipeline: card.pipelineId,
+        timestamp: new Date().toISOString(),
+      })
+    },
+    [cardsExtra, useMockData],
+  )
+
+  const setAutoMoveEnabled = useCallback((enabled: boolean) => {
+    setAutoMoveEnabledState(enabled)
+    saveAutoMove(enabled)
+    if (!suppressBroadcastRef.current) {
+      broadcastEvent({
+        type: 'auto_move_changed',
+        payload: { enabled },
+      })
+    }
+  }, [])
+
+  const setAccessControlFn = useCallback(
+    (pipelineId: string, visibleTo: 'all' | number[]) => {
+      const next = { ...accessControl, [pipelineId]: { visibleTo } }
+      setAccessControlState(next)
+      saveAccessControl(next)
+    },
+    [accessControl],
+  )
+
+  const syncConversations = useCallback(async (): Promise<number> => {
+    if (useMockData) {
+      showToast('Sincronização disponível apenas com Chatwoot conectado', 'info')
+      return 0
+    }
+
+    setIsSyncing(true)
+    try {
+      const { syncConversationsToCards } = await import('@/lib/chatwoot/sync')
+      const pipeline = pipelines.find((p) => p.id === activePipelineId)
+      if (!pipeline) {
+        setIsSyncing(false)
+        return 0
+      }
+
+      const result = await syncConversationsToCards(pipeline, cards)
+      if (result.newCards.length > 0) {
+        setCards((prev) => [...prev, ...result.newCards])
+        showToast(`${result.totalImported} novo(s) lead(s) importado(s)`, 'success')
+      } else {
+        showToast('Nenhum novo lead encontrado', 'info')
+      }
+
+      return result.totalImported
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao sincronizar'
+      showToast(message, 'error')
+      return 0
+    } finally {
+      setIsSyncing(false)
+    }
+  }, [useMockData, pipelines, activePipelineId, cards])
+
+  const addProduct = useCallback((product: CrmProduct) => {
+    setProducts((prev) => {
+      const next = [...prev, product]
+      saveProducts(next)
+      return next
+    })
+    if (!suppressBroadcastRef.current) {
+      broadcastEvent({ type: 'product_added', payload: { product } })
+    }
+  }, [])
+
+  const updateProduct = useCallback((product: CrmProduct) => {
+    setProducts((prev) => {
+      const next = prev.map((p) => (p.id === product.id ? product : p))
+      saveProducts(next)
+      return next
+    })
+    if (!suppressBroadcastRef.current) {
+      broadcastEvent({ type: 'product_updated', payload: { product } })
+    }
+  }, [])
+
+  const deleteProduct = useCallback((id: string) => {
+    setProducts((prev) => {
+      const next = prev.filter((p) => p.id !== id)
+      saveProducts(next)
+      return next
+    })
+    if (!suppressBroadcastRef.current) {
+      broadcastEvent({ type: 'product_deleted', payload: { productId: id } })
+    }
+  }, [])
+
+  const addAutomationRule = useCallback((rule: CrmAutomationRule) => {
+    setAutomationRules((prev) => {
+      const next = [...prev, rule]
+      saveAutomations(next)
+      return next
+    })
+  }, [])
+
+  const updateAutomationRule = useCallback((rule: CrmAutomationRule) => {
+    setAutomationRules((prev) => {
+      const next = prev.map((r) => (r.id === rule.id ? rule : r))
+      saveAutomations(next)
+      return next
+    })
+  }, [])
+
+  const deleteAutomationRule = useCallback((id: string) => {
+    setAutomationRules((prev) => {
+      const next = prev.filter((r) => r.id !== id)
+      saveAutomations(next)
+      return next
+    })
+  }, [])
+
+  const addPipeline = useCallback((pipeline: CrmPipeline) => {
+    setPipelines((prev) => {
+      const next = [...prev, pipeline]
+      savePipelines(next)
+      return next
+    })
+    if (!suppressBroadcastRef.current) {
+      broadcastEvent({ type: 'pipeline_added', payload: { pipeline } })
+    }
+  }, [])
+
+  const updatePipeline = useCallback((pipeline: CrmPipeline) => {
+    setPipelines((prev) => {
+      const next = prev.map((p) => (p.id === pipeline.id ? pipeline : p))
+      savePipelines(next)
+      return next
+    })
+    if (!suppressBroadcastRef.current) {
+      broadcastEvent({ type: 'pipeline_updated', payload: { pipeline } })
+    }
+  }, [])
+
+  const deletePipeline = useCallback(
+    (id: string) => {
+      setPipelines((prev) => {
+        const next = prev.filter((p) => p.id !== id)
+        savePipelines(next)
+        return next
+      })
+      if (activePipelineId === id) {
+        setActivePipelineId((prev) => {
+          const remaining = pipelines.filter((p) => p.id !== id)
+          return remaining[0]?.id ?? ''
+        })
+      }
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({ type: 'pipeline_deleted', payload: { pipelineId: id } })
+      }
+    },
+    [activePipelineId, pipelines],
+  )
+
+  const config = getChatwootConfig()
+  const chatwootUrl = config.url.replace(/\/$/, '')
+  const chatwootAccountId = config.accountId
+
+  const activePipeline = useMemo(
+    () => pipelines.find((p) => p.id === activePipelineId),
+    [pipelines, activePipelineId],
+  )
+
+  const filteredCards = useMemo(() => {
+    return cards.filter((card) => {
+      if (card.pipelineId !== activePipelineId) return false
+
+      if (filters.agentId !== null && card.assignedAgent?.id !== filters.agentId) return false
+
+      if (filters.labels.length > 0) {
+        const hasLabel = filters.labels.some((l) => card.labels.includes(l))
+        if (!hasLabel) return false
+      }
+
+      if (filters.searchQuery) {
+        const q = filters.searchQuery.toLowerCase()
+        const nameMatch = card.contact.name.toLowerCase().includes(q)
+        const emailMatch = card.contact.email?.toLowerCase().includes(q) ?? false
+        const phoneMatch = card.contact.phone_number?.includes(q) ?? false
+        if (!nameMatch && !emailMatch && !phoneMatch) return false
+      }
+
+      return true
+    })
+  }, [cards, activePipelineId, filters])
+
+  const value = useMemo<PipelineStore>(
+    () => ({
+      pipelines,
+      activePipelineId,
+      cards,
+      agents,
+      labels,
+      inboxes,
+      products,
+      automationRules,
+      filters,
+      isLoading,
+      isSyncing,
+      error,
+      useMockData,
+      autoMoveEnabled,
+      accessControl,
+      chatwootUrl,
+      chatwootAccountId,
+      setActivePipeline,
+      setFilters,
+      clearFilters,
+      moveCard,
+      addPipeline,
+      updatePipeline,
+      deletePipeline,
+      refreshData: loadData,
+      updateCardChecklist,
+      addCardNote,
+      updateCardProducts,
+      updateCardPriority,
+      updateCardValue,
+      updateCardLabels,
+      addProduct,
+      updateProduct,
+      deleteProduct,
+      addAutomationRule,
+      updateAutomationRule,
+      deleteAutomationRule,
+      addCard,
+      setAutoMoveEnabled,
+      setAccessControl: setAccessControlFn,
+      syncConversations,
+      activePipeline,
+      filteredCards,
+      isRealtimeConnected,
+      lastRealtimeEventAt,
+    }),
+    [
+      pipelines,
+      activePipelineId,
+      cards,
+      agents,
+      labels,
+      inboxes,
+      products,
+      automationRules,
+      filters,
+      isLoading,
+      isSyncing,
+      error,
+      useMockData,
+      autoMoveEnabled,
+      accessControl,
+      chatwootUrl,
+      chatwootAccountId,
+      setActivePipeline,
+      setFilters,
+      clearFilters,
+      moveCard,
+      addPipeline,
+      updatePipeline,
+      deletePipeline,
+      loadData,
+      updateCardChecklist,
+      addCardNote,
+      updateCardProducts,
+      updateCardPriority,
+      updateCardValue,
+      updateCardLabels,
+      addProduct,
+      updateProduct,
+      deleteProduct,
+      addAutomationRule,
+      updateAutomationRule,
+      deleteAutomationRule,
+      addCard,
+      setAutoMoveEnabled,
+      setAccessControlFn,
+      syncConversations,
+      activePipeline,
+      filteredCards,
+      isRealtimeConnected,
+      lastRealtimeEventAt,
+    ],
+  )
+
+  return <PipelineContext.Provider value={value}>{children}</PipelineContext.Provider>
+}
+
+export function usePipelineStore(): PipelineStore {
+  const ctx = useContext(PipelineContext)
+  if (!ctx) {
+    throw new Error('usePipelineStore deve ser usado dentro de PipelineProvider')
+  }
+  return ctx
+}
