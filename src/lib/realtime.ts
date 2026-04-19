@@ -31,6 +31,7 @@ export type RealtimeEventType =
   | 'product_updated'
   | 'product_deleted'
   | 'auto_move_changed'
+  | 'card_pipeline_moved'
   | 'data_refreshed'
 
 export interface RealtimeEvent {

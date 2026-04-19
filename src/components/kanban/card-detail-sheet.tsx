@@ -176,7 +176,9 @@ function LabelPicker({
 export function CardDetailSheet({ card, open, onOpenChange }: CardDetailSheetProps) {
   const {
     activePipeline,
+    pipelines,
     moveCard,
+    moveCardToPipeline,
     products,
     updateCardChecklist,
     addCardNote,
@@ -192,6 +194,8 @@ export function CardDetailSheet({ card, open, onOpenChange }: CardDetailSheetPro
   const [messages, setMessages] = useState<ChatwootMessage[]>([])
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [activeTab, setActiveTab] = useState('info')
+  const [moveToPipelineId, setMoveToPipelineId] = useState<string>('')
+  const [moveToStageId, setMoveToStageId] = useState<string>('')
 
   const liveCard = card ? filteredCards.find((c) => c.id === card.id) ?? card : null
 
@@ -486,6 +490,77 @@ export function CardDetailSheet({ card, open, onOpenChange }: CardDetailSheetPro
                             <User className="size-3.5 text-muted-foreground" />
                             {liveCard.assignedAgent.name}
                           </div>
+                        </div>
+                      )}
+
+                      {/* Move to another pipeline */}
+                      {pipelines.length > 1 && (
+                        <div className="pt-2 border-t border-border/50">
+                          <label className="mb-1 block text-xs text-muted-foreground">Mover para outro funil</label>
+                          <Select
+                            value={moveToPipelineId}
+                            onValueChange={(val) => {
+                              setMoveToPipelineId(val ?? '')
+                              setMoveToStageId('')
+                            }}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Selecionar funil..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {pipelines
+                                .filter((p) => p.id !== liveCard.pipelineId)
+                                .map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>
+                                    {p.name}
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+
+                          {moveToPipelineId && (() => {
+                            const targetPipeline = pipelines.find((p) => p.id === moveToPipelineId)
+                            if (!targetPipeline) return null
+                            return (
+                              <div className="mt-2 space-y-2">
+                                <Select
+                                  value={moveToStageId}
+                                  onValueChange={(val) => setMoveToStageId(val ?? '')}
+                                >
+                                  <SelectTrigger className="w-full">
+                                    <SelectValue placeholder="Selecionar etapa..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {targetPipeline.stages.map((s) => (
+                                      <SelectItem key={s.id} value={s.id}>
+                                        <div className="flex items-center gap-2">
+                                          <div
+                                            className="size-2 rounded-full"
+                                            style={{ backgroundColor: s.color }}
+                                          />
+                                          {s.name}
+                                        </div>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <Button
+                                  size="sm"
+                                  className="w-full"
+                                  onClick={() => {
+                                    const stageId = moveToStageId || undefined
+                                    moveCardToPipeline(liveCard.id, moveToPipelineId, stageId)
+                                    setMoveToPipelineId('')
+                                    setMoveToStageId('')
+                                    onOpenChange(false)
+                                  }}
+                                >
+                                  <ArrowRightLeft className="mr-1.5 size-3.5" />
+                                  Mover para {targetPipeline.name}
+                                </Button>
+                              </div>
+                            )
+                          })()}
                         </div>
                       )}
                     </div>

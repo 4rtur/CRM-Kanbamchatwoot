@@ -109,6 +109,7 @@ interface PipelineStore {
   setFilters: (filters: Partial<Filters>) => void
   clearFilters: () => void
   moveCard: (cardId: string, toStageId: string) => void
+  moveCardToPipeline: (cardId: string, toPipelineId: string, toStageId?: string) => void
   addPipeline: (pipeline: CrmPipeline) => void
   updatePipeline: (pipeline: CrmPipeline) => void
   deletePipeline: (id: string) => void
@@ -407,6 +408,20 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
             })
             break
           }
+          case 'card_pipeline_moved': {
+            const { cardId, toPipelineId, toStageId } = event.payload as {
+              cardId: string
+              toPipelineId: string
+              toStageId: string
+            }
+            setCards((prev) =>
+              prev.map((card) => {
+                if (card.id !== cardId) return card
+                return { ...card, pipelineId: toPipelineId, stageId: toStageId }
+              }),
+            )
+            break
+          }
           case 'labels_changed': {
             const { cardId, labels: newLabels } = event.payload as { cardId: string; labels: string[] }
             setCards((prev) =>
@@ -660,6 +675,95 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       }
     },
     [cards, useMockData, cardsExtra, automationRules],
+  )
+
+  const moveCardToPipeline = useCallback(
+    (cardId: string, toPipelineId: string, toStageId?: string) => {
+      const card = cards.find((c) => c.id === cardId)
+      if (!card) return
+
+      const targetPipeline = pipelines.find((p) => p.id === toPipelineId)
+      if (!targetPipeline || targetPipeline.stages.length === 0) return
+
+      const fromPipelineId = card.pipelineId
+      const fromPipeline = pipelines.find((p) => p.id === fromPipelineId)
+      const targetStageId = toStageId ?? targetPipeline.stages[0].id
+      const targetStage = targetPipeline.stages.find((s) => s.id === targetStageId)
+
+      const note: CrmNote = {
+        id: `note-${Date.now()}`,
+        text: `Movido de "${fromPipeline?.name ?? fromPipelineId}" para "${targetPipeline.name}" → ${targetStage?.name ?? targetStageId}`,
+        author: 'Sistema',
+        timestamp: new Date().toISOString(),
+        type: 'stage_change',
+      }
+
+      setCards((prev) =>
+        prev.map((c) => {
+          if (c.id !== cardId) return c
+          const updated = {
+            ...c,
+            pipelineId: toPipelineId,
+            stageId: targetStageId,
+            notes: [...c.notes, note],
+          }
+          updated.score = calculateLeadScore(updated)
+          return updated
+        }),
+      )
+
+      const newExtra = { ...cardsExtra }
+      const existingNotes = newExtra[cardId]?.notes ?? card.notes
+      newExtra[cardId] = {
+        ...newExtra[cardId],
+        notes: [...existingNotes, note],
+      }
+      setCardsExtra(newExtra)
+      saveCardsExtra(newExtra)
+
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({
+          type: 'card_pipeline_moved',
+          payload: { cardId, toPipelineId, toStageId: targetStageId },
+        })
+      }
+
+      fireWebhook({
+        event: 'card.pipeline_moved',
+        card: {
+          id: card.id,
+          contactId: card.contactId,
+          contactName: card.contact.name,
+          stageId: targetStageId,
+        },
+        from_pipeline: fromPipelineId,
+        to_pipeline: toPipelineId,
+        to_stage: targetStageId,
+        timestamp: new Date().toISOString(),
+      })
+
+      showToast(
+        `${card.contact.name} movido para ${targetPipeline.name} → ${targetStage?.name ?? targetStageId}`,
+        'success',
+      )
+
+      if (!useMockData) {
+        updateContactCustomAttributes(card.contactId, {
+          ...card.contact.custom_attributes,
+          crm_pipeline: toPipelineId,
+          crm_stage: targetStageId,
+        }).catch(() => {
+          // revert on failure
+          setCards((prev) =>
+            prev.map((c) => {
+              if (c.id !== cardId) return c
+              return { ...c, pipelineId: fromPipelineId, stageId: card.stageId }
+            }),
+          )
+        })
+      }
+    },
+    [cards, pipelines, cardsExtra, useMockData],
   )
 
   const updateCardLabels = useCallback(
@@ -1082,6 +1186,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       setFilters,
       clearFilters,
       moveCard,
+      moveCardToPipeline,
       addPipeline,
       updatePipeline,
       deletePipeline,
@@ -1129,6 +1234,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       setFilters,
       clearFilters,
       moveCard,
+      moveCardToPipeline,
       addPipeline,
       updatePipeline,
       deletePipeline,

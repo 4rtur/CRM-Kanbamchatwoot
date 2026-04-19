@@ -2,7 +2,7 @@ const WEBHOOK_URL_STORAGE_KEY = 'chatwoot-crm-webhook-url'
 const WEBHOOK_ENABLED_STORAGE_KEY = 'chatwoot-crm-webhook-enabled'
 
 export interface WebhookPayload {
-  event: 'card.moved' | 'card.created' | 'card.label_changed'
+  event: 'card.moved' | 'card.created' | 'card.label_changed' | 'card.pipeline_moved'
   card: {
     id: string
     contactId: number
@@ -11,7 +11,9 @@ export interface WebhookPayload {
   }
   from_stage?: string
   to_stage?: string
-  pipeline: string
+  from_pipeline?: string
+  to_pipeline?: string
+  pipeline?: string
   timestamp: string
 }
 
