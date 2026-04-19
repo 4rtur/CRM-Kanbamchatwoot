@@ -1,18 +1,39 @@
 import { NextRequest } from 'next/server'
 
+function getCredentials(request: NextRequest): {
+  chatwootUrl: string | null
+  chatwootToken: string | null
+  accountId: string | null
+} {
+  const envUrl = process.env.CHATWOOT_URL
+  const envToken = process.env.CHATWOOT_API_TOKEN
+  const envAccountId = process.env.CHATWOOT_ACCOUNT_ID
+
+  if (envUrl && envToken && envAccountId) {
+    return {
+      chatwootUrl: envUrl,
+      chatwootToken: envToken,
+      accountId: envAccountId,
+    }
+  }
+
+  return {
+    chatwootUrl: request.headers.get('x-chatwoot-url'),
+    chatwootToken: request.headers.get('x-chatwoot-token'),
+    accountId: request.headers.get('x-chatwoot-account-id'),
+  }
+}
+
 async function proxyRequest(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {
   const { path } = await params
-
-  const chatwootUrl = request.headers.get('x-chatwoot-url')
-  const chatwootToken = request.headers.get('x-chatwoot-token')
-  const accountId = request.headers.get('x-chatwoot-account-id')
+  const { chatwootUrl, chatwootToken, accountId } = getCredentials(request)
 
   if (!chatwootUrl || !chatwootToken || !accountId) {
     return Response.json(
-      { error: 'Cabeçalhos x-chatwoot-url, x-chatwoot-token e x-chatwoot-account-id são obrigatórios.' },
+      { error: 'Credenciais Chatwoot não configuradas. Defina as variáveis de ambiente ou preencha nas Configurações.' },
       { status: 400 },
     )
   }

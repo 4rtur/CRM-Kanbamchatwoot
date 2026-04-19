@@ -6,6 +6,11 @@ export interface ChatwootConfig {
   accountId: string
 }
 
+export interface ServerConfigStatus {
+  serverConfigured: boolean
+  chatwootUrl: string
+}
+
 function getFromStorage(): Partial<ChatwootConfig> {
   if (typeof window === 'undefined') return {}
   try {
@@ -34,4 +39,16 @@ export function saveChatwootConfig(config: ChatwootConfig): void {
 export function isConfigured(): boolean {
   const config = getChatwootConfig()
   return Boolean(config.url && config.apiToken && config.accountId)
+}
+
+export async function fetchServerConfigStatus(): Promise<ServerConfigStatus> {
+  try {
+    const response = await fetch('/api/config')
+    if (!response.ok) {
+      return { serverConfigured: false, chatwootUrl: '' }
+    }
+    return (await response.json()) as ServerConfigStatus
+  } catch {
+    return { serverConfigured: false, chatwootUrl: '' }
+  }
 }

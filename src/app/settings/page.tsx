@@ -4,8 +4,9 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import { ArrowLeft, Save, CheckCircle2, AlertCircle, Kanban, Webhook, ToggleLeft, ToggleRight } from 'lucide-react'
-import { getChatwootConfig, saveChatwootConfig } from '@/lib/config'
+import { ArrowLeft, Save, CheckCircle2, AlertCircle, Kanban, Webhook, ToggleLeft, ToggleRight, Server } from 'lucide-react'
+import { getChatwootConfig, saveChatwootConfig, fetchServerConfigStatus } from '@/lib/config'
+import type { ServerConfigStatus } from '@/lib/config'
 import {
   getWebhookUrl,
   setWebhookUrl,
@@ -21,6 +22,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [testResult, setTestResult] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [testError, setTestError] = useState('')
+  const [serverConfig, setServerConfig] = useState<ServerConfigStatus | null>(null)
 
   const [webhookUrl, setWebhookUrlState] = useState('')
   const [webhookEnabled, setWebhookEnabledState] = useState(false)
@@ -33,6 +35,8 @@ export default function SettingsPage() {
     setAccountId(config.accountId)
     setWebhookUrlState(getWebhookUrl())
     setWebhookEnabledState(isWebhookEnabled())
+
+    fetchServerConfigStatus().then(setServerConfig)
   }, [])
 
   function handleSave() {
@@ -49,7 +53,9 @@ export default function SettingsPage() {
   }
 
   async function handleTest() {
-    if (!url || !apiToken || !accountId) {
+    const isServer = serverConfig?.serverConfigured
+
+    if (!isServer && (!url || !apiToken || !accountId)) {
       setTestResult('error')
       setTestError('Preencha todos os campos antes de testar.')
       return
@@ -59,14 +65,18 @@ export default function SettingsPage() {
     setTestError('')
 
     try {
-      const response = await fetch('/api/chatwoot/agents', {
-        headers: {
-          'Content-Type': 'application/json',
-          'x-chatwoot-url': url,
-          'x-chatwoot-token': apiToken,
-          'x-chatwoot-account-id': accountId,
-        },
-      })
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+
+      // Quando configurado pelo servidor, o proxy lê as env vars — sem headers do client
+      if (!isServer) {
+        headers['x-chatwoot-url'] = url
+        headers['x-chatwoot-token'] = apiToken
+        headers['x-chatwoot-account-id'] = accountId
+      }
+
+      const response = await fetch('/api/chatwoot/agents', { headers })
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
@@ -78,6 +88,8 @@ export default function SettingsPage() {
       setTestError(err instanceof Error ? err.message : 'Erro ao conectar')
     }
   }
+
+  const isServerMode = serverConfig?.serverConfigured === true
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -98,62 +110,87 @@ export default function SettingsPage() {
         {/* Chatwoot Connection */}
         <section>
           <h2 className="text-lg font-semibold">Conexão com Chatwoot</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Configure a URL, token de API e ID da conta para conectar ao seu Chatwoot.
-            Os dados são salvos localmente no navegador.
-          </p>
+          {isServerMode ? (
+            <div className="mt-3 flex items-start gap-3 rounded-lg border border-green-500/30 bg-green-500/10 p-4">
+              <Server className="mt-0.5 size-5 shrink-0 text-green-500" />
+              <div>
+                <p className="text-sm font-medium text-green-500">
+                  Conexão configurada pelo servidor
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  As credenciais estão definidas via variáveis de ambiente no servidor. O token de API não é exposto ao navegador.
+                </p>
+                {serverConfig.chatwootUrl && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    URL: <span className="font-mono">{serverConfig.chatwootUrl}</span>
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Configure a URL, token de API e ID da conta para conectar ao seu Chatwoot.
+              Os dados são salvos localmente no navegador.
+            </p>
+          )}
         </section>
 
         <Separator className="my-6" />
 
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium">URL do Chatwoot</label>
-            <Input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://app.chatwoot.com"
-              type="url"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">
-              Exemplo: https://app.chatwoot.com ou sua instância self-hosted
-            </p>
-          </div>
+        {!isServerMode && (
+          <>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">URL do Chatwoot</label>
+                <Input
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://app.chatwoot.com"
+                  type="url"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Exemplo: https://app.chatwoot.com ou sua instância self-hosted
+                </p>
+              </div>
 
-          <div>
-            <label className="mb-1.5 block text-sm font-medium">Token de API</label>
-            <Input
-              value={apiToken}
-              onChange={(e) => setApiToken(e.target.value)}
-              placeholder="seu-api-token"
-              type="password"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">
-              Encontre em Configurações {'>'} Conta {'>'} Token de Acesso
-            </p>
-          </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Token de API</label>
+                <Input
+                  value={apiToken}
+                  onChange={(e) => setApiToken(e.target.value)}
+                  placeholder="seu-api-token"
+                  type="password"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Encontre em Configurações {'>'} Conta {'>'} Token de Acesso
+                </p>
+              </div>
 
-          <div>
-            <label className="mb-1.5 block text-sm font-medium">ID da Conta</label>
-            <Input
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-              placeholder="1"
-              type="text"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">
-              Número da conta visível na URL do Chatwoot
-            </p>
-          </div>
-        </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">ID da Conta</label>
+                <Input
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)}
+                  placeholder="1"
+                  type="text"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Número da conta visível na URL do Chatwoot
+                </p>
+              </div>
+            </div>
 
-        <Separator className="my-6" />
+            <Separator className="my-6" />
+          </>
+        )}
 
         <div className="flex items-center gap-3">
-          <Button onClick={handleSave}>
-            <Save className="size-3.5" data-icon="inline-start" />
-            Salvar
-          </Button>
+          {!isServerMode && (
+            <Button onClick={handleSave}>
+              <Save className="size-3.5" data-icon="inline-start" />
+              Salvar
+            </Button>
+          )}
           <Button variant="outline" onClick={handleTest}>
             Testar conexão
           </Button>
@@ -252,17 +289,21 @@ export default function SettingsPage() {
         <Separator className="my-6" />
 
         {/* Environment variables */}
-        <section>
-          <h3 className="text-sm font-semibold">Variáveis de ambiente (alternativa)</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Você também pode configurar via variáveis de ambiente no servidor:
-          </p>
-          <div className="mt-3 space-y-1 rounded-lg bg-muted/30 p-3 font-mono text-xs">
-            <p>NEXT_PUBLIC_CHATWOOT_URL=https://app.chatwoot.com</p>
-            <p>NEXT_PUBLIC_CHATWOOT_API_TOKEN=seu-token</p>
-            <p>NEXT_PUBLIC_CHATWOOT_ACCOUNT_ID=1</p>
-          </div>
-        </section>
+        {!isServerMode && (
+          <section>
+            <h3 className="text-sm font-semibold">Variáveis de ambiente (alternativa)</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Você também pode configurar via variáveis de ambiente no servidor.
+              Quando definidas, o token nunca é exposto ao navegador.
+            </p>
+            <div className="mt-3 space-y-1 rounded-lg bg-muted/30 p-3 font-mono text-xs">
+              <p>CHATWOOT_URL=https://app.chatwoot.com</p>
+              <p>CHATWOOT_API_TOKEN=seu-token</p>
+              <p>CHATWOOT_ACCOUNT_ID=1</p>
+              <p>CRM_ACCESS_PASSWORD=sua-senha</p>
+            </div>
+          </section>
+        )}
       </div>
     </div>
   )

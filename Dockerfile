@@ -23,6 +23,19 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# ──────────────────────────────────────────────
+# Variáveis de ambiente para configuração segura
+# Defina no docker-compose.yml ou via docker run -e
+#
+# Conexão com Chatwoot (obrigatório para modo servidor):
+# ENV CHATWOOT_URL=https://chat.example.com
+# ENV CHATWOOT_API_TOKEN=your_token_here
+# ENV CHATWOOT_ACCOUNT_ID=1
+#
+# Proteção por senha (opcional):
+# ENV CRM_ACCESS_PASSWORD=your_password_here
+# ──────────────────────────────────────────────
+
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
