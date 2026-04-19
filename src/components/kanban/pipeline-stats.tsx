@@ -1,7 +1,7 @@
 'use client'
 
 import { usePipelineStore } from '@/lib/store/pipeline-store'
-import { Users, DollarSign, TrendingUp, Clock } from 'lucide-react'
+import { Users, TrendingUp, Clock } from 'lucide-react'
 
 function formatCurrency(value: number): string {
   if (value >= 1000) {
@@ -11,13 +11,12 @@ function formatCurrency(value: number): string {
 }
 
 export function PipelineStats() {
-  const { filteredCards, activePipeline, cards, activePipelineId } = usePipelineStore()
+  const { activePipeline, cards, activePipelineId } = usePipelineStore()
 
   if (!activePipeline) return null
 
   const pipelineCards = cards.filter((c) => c.pipelineId === activePipelineId)
   const totalLeads = pipelineCards.length
-  const totalValue = pipelineCards.reduce((sum, card) => sum + card.value, 0)
 
   const stages = activePipeline.stages
   const lastStage = stages[stages.length - 1]
@@ -36,47 +35,64 @@ export function PipelineStats() {
       )
     : 0
 
-  const stats = [
-    {
-      icon: Users,
-      label: 'Total leads',
-      value: String(totalLeads),
-      color: 'text-blue-400',
-    },
-    {
-      icon: DollarSign,
-      label: 'Valor total',
-      value: formatCurrency(totalValue),
-      color: 'text-green-400',
-    },
-    {
-      icon: TrendingUp,
-      label: 'Conversão',
-      value: `${conversionRate}%`,
-      color: 'text-purple-400',
-    },
-    {
-      icon: Clock,
-      label: 'Tempo médio',
-      value: `${avgDays}d`,
-      color: 'text-yellow-400',
-    },
-  ]
+  const stageValues = stages.map((stage) => {
+    const stageCards = pipelineCards.filter((c) => c.stageId === stage.id)
+    const value = stageCards.reduce((sum, c) => sum + c.value, 0)
+    return { stage, value }
+  })
+
+  const pipelineValue = pipelineCards
+    .filter((c) => !lastStage || c.stageId !== lastStage.id)
+    .reduce((sum, c) => sum + c.value, 0)
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2">
-      {stats.map((stat) => (
-        <div
-          key={stat.label}
-          className="flex items-center gap-2 rounded-lg border border-border/50 bg-card px-3 py-1.5"
-        >
-          <stat.icon className={`size-3.5 ${stat.color}`} />
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-sm font-semibold text-foreground">{stat.value}</span>
-            <span className="text-[10px] text-muted-foreground">{stat.label}</span>
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}>
+      {/* Per-stage values */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem' }}>
+        {stageValues.map((sv, i) => (
+          <div
+            key={sv.stage.id}
+            className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-card px-2.5 py-1"
+          >
+            <div
+              className="size-2 shrink-0 rounded-full"
+              style={{ backgroundColor: sv.stage.color }}
+            />
+            <span className="text-[10px] text-muted-foreground whitespace-nowrap">{sv.stage.name}:</span>
+            <span className="text-xs font-semibold whitespace-nowrap" style={{ color: sv.stage.color }}>
+              {formatCurrency(sv.value)}
+            </span>
           </div>
+        ))}
+      </div>
+
+      {/* Separator */}
+      <div className="h-5 w-px bg-border/50 mx-1 hidden sm:block" />
+
+      {/* Summary stats */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-card px-2.5 py-1">
+          <Users className="size-3 text-blue-400" />
+          <span className="text-xs font-semibold text-foreground">{totalLeads}</span>
+          <span className="text-[10px] text-muted-foreground">leads</span>
         </div>
-      ))}
+        <div className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-card px-2.5 py-1">
+          <TrendingUp className="size-3 text-purple-400" />
+          <span className="text-xs font-semibold text-foreground">{conversionRate}%</span>
+          <span className="text-[10px] text-muted-foreground">conversão</span>
+        </div>
+        <div className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-card px-2.5 py-1">
+          <Clock className="size-3 text-yellow-400" />
+          <span className="text-xs font-semibold text-foreground">{avgDays}d</span>
+          <span className="text-[10px] text-muted-foreground">média</span>
+        </div>
+        {pipelineValue > 0 && (
+          <div className="flex items-center gap-1.5 px-2 py-1">
+            <span className="text-[10px] text-muted-foreground">Pipeline:</span>
+            <span className="text-[10px] text-muted-foreground font-medium">{formatCurrency(pipelineValue)}</span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

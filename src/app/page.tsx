@@ -8,7 +8,7 @@ import { PipelineStats } from '@/components/kanban/pipeline-stats'
 import { FilterBar } from '@/components/filters/filter-bar'
 import { ToastContainer } from '@/components/ui/toast-container'
 import { Button } from '@/components/ui/button'
-import { Settings, RefreshCw, Kanban, BarChart3, RefreshCcw, Sun, Moon } from 'lucide-react'
+import { Settings, RefreshCw, Kanban, BarChart3, RefreshCcw, Sun, Moon, Package } from 'lucide-react'
 import { useTheme } from '@/lib/theme'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -103,6 +103,12 @@ function CrmApp() {
             <Button variant="ghost" size="sm">
               <BarChart3 className="size-3.5" data-icon="inline-start" />
               Relatórios
+            </Button>
+          </Link>
+          <Link href="/produtos">
+            <Button variant="ghost" size="sm">
+              <Package className="size-3.5" data-icon="inline-start" />
+              Produtos
             </Button>
           </Link>
           <Button

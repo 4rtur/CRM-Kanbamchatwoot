@@ -90,10 +90,11 @@ export function ProductList() {
                 {catProducts.length} produto{catProducts.length !== 1 ? 's' : ''}
               </span>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
               {catProducts.map((product) => (
                 <div
                   key={product.id}
+                  style={{ flex: '1 1 calc(50% - 0.25rem)', minWidth: '200px' }}
                   className="flex items-center gap-3 rounded-lg border border-border/50 bg-card p-3"
                 >
                   <div className="flex size-10 items-center justify-center rounded-lg bg-muted">
