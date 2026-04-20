@@ -257,10 +257,41 @@ function buildMockCards(extraData: CardsExtraData): CrmCard[] {
   })
 }
 
-async function buildLiveCards(contacts: ChatwootContact[], extraData: CardsExtraData): Promise<CrmCard[]> {
+function resolveStageId(rawStage: string, pipeline: CrmPipeline): string {
+  if (!rawStage) return pipeline.stages[0]?.id || 'novo'
+  // Match by exact ID
+  const byId = pipeline.stages.find((s) => s.id === rawStage)
+  if (byId) return byId.id
+  // Match by name (case-insensitive, accent-insensitive)
+  const normalize = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')
+  const normalizedRaw = normalize(rawStage)
+  const byName = pipeline.stages.find((s) => normalize(s.name) === normalizedRaw || normalize(s.id) === normalizedRaw)
+  if (byName) return byName.id
+  // Partial match
+  const byPartial = pipeline.stages.find((s) => normalize(s.name).includes(normalizedRaw) || normalizedRaw.includes(normalize(s.id)))
+  if (byPartial) return byPartial.id
+  // Fallback to first stage
+  return pipeline.stages[0]?.id || 'novo'
+}
+
+function resolvePipelineId(rawPipeline: string, pipelines: CrmPipeline[]): string {
+  if (!rawPipeline) return pipelines[0]?.id || 'vendas'
+  const byId = pipelines.find((p) => p.id === rawPipeline)
+  if (byId) return byId.id
+  const normalize = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')
+  const byName = pipelines.find((p) => normalize(p.name) === normalize(rawPipeline))
+  if (byName) return byName.id
+  return pipelines[0]?.id || 'vendas'
+}
+
+async function buildLiveCards(contacts: ChatwootContact[], extraData: CardsExtraData, pipelines?: CrmPipeline[]): Promise<CrmCard[]> {
+  const allPipelines = pipelines || loadPipelines()
   return contacts.map((contact) => {
-    const pipelineId = (contact.custom_attributes.crm_pipeline as string) || 'vendas'
-    const stageId = (contact.custom_attributes.crm_stage as string) || 'novo'
+    const rawPipeline = (contact.custom_attributes.crm_pipeline as string) || ''
+    const rawStage = (contact.custom_attributes.crm_stage as string) || ''
+    const pipelineId = resolvePipelineId(rawPipeline, allPipelines)
+    const pipeline = allPipelines.find((p) => p.id === pipelineId) || allPipelines[0]
+    const stageId = pipeline ? resolveStageId(rawStage, pipeline) : 'novo'
     const cardId = `card-${contact.id}`
     const extra = extraData[cardId]
 
