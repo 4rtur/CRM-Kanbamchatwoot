@@ -48,9 +48,23 @@ import {
 } from '@/lib/chatwoot/api'
 import type { ChatwootLabel, ChatwootInbox } from '@/lib/chatwoot/types'
 import { calculateLeadScore } from '@/lib/scoring'
-import { loadAutomations, saveAutomations, evaluateAutomations } from '@/lib/automations'
+import { evaluateAutomations } from '@/lib/automations'
 import { fireWebhook } from '@/lib/webhooks'
 import { showToast } from '@/lib/toast'
+import {
+  fetchPipelinesFromDb,
+  createPipelineInDb,
+  updatePipelineInDb,
+  deletePipelineInDb,
+  fetchProductsFromDb,
+  createProductInDb,
+  updateProductInDb,
+  deleteProductInDb,
+  fetchAutomationsFromDb,
+  createAutomationInDb,
+  updateAutomationInDb,
+  deleteAutomationInDb,
+} from '@/lib/store/db-persistence'
 import {
   initRealtime,
   broadcastEvent,
@@ -352,17 +366,31 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     setIsLoading(true)
     setError(null)
 
-    const storedPipelines = loadPipelines()
-    setPipelines(storedPipelines)
+    let resolvedPipelines: CrmPipeline[]
+    try {
+      const fromDb = await fetchPipelinesFromDb()
+      resolvedPipelines = fromDb.length > 0 ? fromDb : loadPipelines()
+    } catch {
+      resolvedPipelines = loadPipelines()
+    }
+    setPipelines(resolvedPipelines)
 
     const storedExtra = loadCardsExtra()
     setCardsExtra(storedExtra)
 
-    const storedProducts = loadProducts()
-    setProducts(storedProducts)
+    try {
+      const productsFromDb = await fetchProductsFromDb()
+      setProducts(productsFromDb.length > 0 ? productsFromDb : loadProducts())
+    } catch {
+      setProducts(loadProducts())
+    }
 
-    const storedRules = loadAutomations()
-    setAutomationRules(storedRules)
+    try {
+      const rulesFromDb = await fetchAutomationsFromDb()
+      setAutomationRules(rulesFromDb)
+    } catch {
+      setAutomationRules([])
+    }
 
     const storedAutoMove = loadAutoMove()
     setAutoMoveEnabledState(storedAutoMove)
@@ -1064,93 +1092,102 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
   }, [useMockData, pipelines, activePipelineId, cards])
 
   const addProduct = useCallback((product: CrmProduct) => {
-    setProducts((prev) => {
-      const next = [...prev, product]
-      saveProducts(next)
-      return next
+    const previous = products
+    setProducts((prev) => [...prev, product])
+    createProductInDb(product).catch((err: unknown) => {
+      setProducts(previous)
+      showToast(err instanceof Error ? err.message : 'Falha ao criar produto', 'error')
     })
     if (!suppressBroadcastRef.current) {
       broadcastEvent({ type: 'product_added', payload: { product } })
     }
-  }, [])
+  }, [products])
 
   const updateProduct = useCallback((product: CrmProduct) => {
-    setProducts((prev) => {
-      const next = prev.map((p) => (p.id === product.id ? product : p))
-      saveProducts(next)
-      return next
+    const previous = products
+    setProducts((prev) => prev.map((p) => (p.id === product.id ? product : p)))
+    updateProductInDb(product).catch((err: unknown) => {
+      setProducts(previous)
+      showToast(err instanceof Error ? err.message : 'Falha ao atualizar produto', 'error')
     })
     if (!suppressBroadcastRef.current) {
       broadcastEvent({ type: 'product_updated', payload: { product } })
     }
-  }, [])
+  }, [products])
 
   const deleteProduct = useCallback((id: string) => {
-    setProducts((prev) => {
-      const next = prev.filter((p) => p.id !== id)
-      saveProducts(next)
-      return next
+    const previous = products
+    setProducts((prev) => prev.filter((p) => p.id !== id))
+    deleteProductInDb(id).catch((err: unknown) => {
+      setProducts(previous)
+      showToast(err instanceof Error ? err.message : 'Falha ao remover produto', 'error')
     })
     if (!suppressBroadcastRef.current) {
       broadcastEvent({ type: 'product_deleted', payload: { productId: id } })
     }
-  }, [])
+  }, [products])
 
   const addAutomationRule = useCallback((rule: CrmAutomationRule) => {
-    setAutomationRules((prev) => {
-      const next = [...prev, rule]
-      saveAutomations(next)
-      return next
+    const previous = automationRules
+    setAutomationRules((prev) => [...prev, rule])
+    createAutomationInDb(rule).catch((err: unknown) => {
+      setAutomationRules(previous)
+      showToast(err instanceof Error ? err.message : 'Falha ao criar automação', 'error')
     })
-  }, [])
+  }, [automationRules])
 
   const updateAutomationRule = useCallback((rule: CrmAutomationRule) => {
-    setAutomationRules((prev) => {
-      const next = prev.map((r) => (r.id === rule.id ? rule : r))
-      saveAutomations(next)
-      return next
+    const previous = automationRules
+    setAutomationRules((prev) => prev.map((r) => (r.id === rule.id ? rule : r)))
+    updateAutomationInDb(rule).catch((err: unknown) => {
+      setAutomationRules(previous)
+      showToast(err instanceof Error ? err.message : 'Falha ao atualizar automação', 'error')
     })
-  }, [])
+  }, [automationRules])
 
   const deleteAutomationRule = useCallback((id: string) => {
-    setAutomationRules((prev) => {
-      const next = prev.filter((r) => r.id !== id)
-      saveAutomations(next)
-      return next
+    const previous = automationRules
+    setAutomationRules((prev) => prev.filter((r) => r.id !== id))
+    deleteAutomationInDb(id).catch((err: unknown) => {
+      setAutomationRules(previous)
+      showToast(err instanceof Error ? err.message : 'Falha ao remover automação', 'error')
     })
-  }, [])
+  }, [automationRules])
 
   const addPipeline = useCallback((pipeline: CrmPipeline) => {
-    setPipelines((prev) => {
-      const next = [...prev, pipeline]
-      savePipelines(next)
-      return next
+    const previous = pipelines
+    setPipelines((prev) => [...prev, pipeline])
+    createPipelineInDb(pipeline).catch((err: unknown) => {
+      setPipelines(previous)
+      showToast(err instanceof Error ? err.message : 'Falha ao criar pipeline', 'error')
     })
     if (!suppressBroadcastRef.current) {
       broadcastEvent({ type: 'pipeline_added', payload: { pipeline } })
     }
-  }, [])
+  }, [pipelines])
 
   const updatePipeline = useCallback((pipeline: CrmPipeline) => {
-    setPipelines((prev) => {
-      const next = prev.map((p) => (p.id === pipeline.id ? pipeline : p))
-      savePipelines(next)
-      return next
+    const previous = pipelines
+    setPipelines((prev) => prev.map((p) => (p.id === pipeline.id ? pipeline : p)))
+    updatePipelineInDb(pipeline).catch((err: unknown) => {
+      setPipelines(previous)
+      showToast(err instanceof Error ? err.message : 'Falha ao atualizar pipeline', 'error')
     })
     if (!suppressBroadcastRef.current) {
       broadcastEvent({ type: 'pipeline_updated', payload: { pipeline } })
     }
-  }, [])
+  }, [pipelines])
 
   const deletePipeline = useCallback(
     (id: string) => {
-      setPipelines((prev) => {
-        const next = prev.filter((p) => p.id !== id)
-        savePipelines(next)
-        return next
+      const previousPipelines = pipelines
+      setPipelines((prev) => prev.filter((p) => p.id !== id))
+      deletePipelineInDb(id).catch((err: unknown) => {
+        setPipelines(previousPipelines)
+        showToast(err instanceof Error ? err.message : 'Falha ao remover pipeline', 'error')
       })
       if (activePipelineId === id) {
-        setActivePipelineId((prev) => {
+        setActivePipelineId(() => {
           const remaining = pipelines.filter((p) => p.id !== id)
           return remaining[0]?.id ?? ''
         })
