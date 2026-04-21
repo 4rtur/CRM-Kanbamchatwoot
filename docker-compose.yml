@@ -1,0 +1,18 @@
+services:
+  crm:
+    build: .
+    ports:
+      - '127.0.0.1:3005:3000'
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    restart: always
+    networks:
+      - default
+      - chatwoot_default
+    depends_on: []
+
+networks:
+  chatwoot_default:
+    external: true
