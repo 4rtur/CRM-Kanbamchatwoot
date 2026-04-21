@@ -375,6 +375,15 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     }
     setPipelines(resolvedPipelines)
 
+    if (resolvedPipelines.length > 0) {
+      setActivePipelineId((current) => {
+        const exists = resolvedPipelines.some((p) => p.id === current)
+        if (exists) return current
+        const preferred = resolvedPipelines.find((p) => p.id.endsWith('-vendas'))
+        return preferred?.id ?? resolvedPipelines[0].id
+      })
+    }
+
     const storedExtra = loadCardsExtra()
     setCardsExtra(storedExtra)
 
@@ -1204,7 +1213,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
   const chatwootAccountId = config.accountId
 
   const activePipeline = useMemo(
-    () => pipelines.find((p) => p.id === activePipelineId),
+    () => pipelines.find((p) => p.id === activePipelineId) ?? pipelines[0],
     [pipelines, activePipelineId],
   )
 
