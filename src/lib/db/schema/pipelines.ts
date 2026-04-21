@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { pgTable, text, timestamp, boolean, integer, uniqueIndex, index } from 'drizzle-orm/pg-core'
 import { tenants } from './tenants'
 
@@ -16,8 +17,8 @@ export const pipelines = pgTable(
   },
   (table) => ({
     tenantDefaultIdx: uniqueIndex('pipelines_tenant_default_idx')
-      .on(table.tenantId, table.isDefault)
-      .where(table.isDefault),
+      .on(table.tenantId)
+      .where(sql`${table.isDefault} IS TRUE`),
     tenantIdx: index('pipelines_tenant_idx').on(table.tenantId),
   }),
 )
