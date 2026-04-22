@@ -56,6 +56,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>
 }
 
+// Limite de segurança pra não explodir RAM em tenants com muitos contatos.
+// 50 páginas × 15 contatos/página = 750 contatos por carga. Chatwoot não
+// expõe per_page confiavelmente, então iteramos páginas.
+const MAX_CONTACT_PAGES = 50
+
 export async function listContacts(page = 1, searchQuery?: string): Promise<{
   contacts: ChatwootContact[]
   totalCount: number
@@ -75,11 +80,39 @@ export async function listContacts(page = 1, searchQuery?: string): Promise<{
     }
   }
 
-  const result = await request<ChatwootContactPayload>(path)
+  const first = await request<ChatwootContactPayload>(path)
+  const totalCount = first.meta.count
+  const accumulated: ChatwootContact[] = [...first.payload]
+
+  // Se o chamador passou page explícito (!= 1), respeita a semântica antiga
+  // e retorna só aquela página.
+  if (page !== 1) {
+    return {
+      contacts: first.payload,
+      totalCount,
+      currentPage: first.meta.current_page,
+    }
+  }
+
+  // Busca páginas adicionais até cobrir totalCount (ou hit do limite de segurança).
+  let currentPage = first.meta.current_page
+  while (accumulated.length < totalCount && currentPage < MAX_CONTACT_PAGES) {
+    currentPage += 1
+    const nextParams = new URLSearchParams({ page: String(currentPage) })
+    const nextPath = `/contacts?${nextParams}`
+    try {
+      const next = await request<ChatwootContactPayload>(nextPath)
+      if (next.payload.length === 0) break
+      accumulated.push(...next.payload)
+    } catch {
+      break
+    }
+  }
+
   return {
-    contacts: result.payload,
-    totalCount: result.meta.count,
-    currentPage: result.meta.current_page,
+    contacts: accumulated,
+    totalCount,
+    currentPage: 1,
   }
 }
 
