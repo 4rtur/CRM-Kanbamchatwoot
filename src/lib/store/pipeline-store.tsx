@@ -1061,7 +1061,19 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
 
   const updateCardProducts = useCallback(
     (cardId: string, productIds: string[]) => {
-      const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], products: productIds } }
+      const productsTotal = productIds.reduce((sum, id) => {
+        const product = products.find((p) => p.id === id)
+        return sum + (product?.price ?? 0)
+      }, 0)
+
+      const newExtra = {
+        ...cardsExtra,
+        [cardId]: {
+          ...cardsExtra[cardId],
+          products: productIds,
+          value: productsTotal,
+        },
+      }
       setCardsExtra(newExtra)
       saveCardsExtra(newExtra)
 
@@ -1075,13 +1087,13 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       setCards((prev) =>
         prev.map((card) => {
           if (card.id !== cardId) return card
-          const updated = { ...card, products: productIds }
+          const updated = { ...card, products: productIds, value: productsTotal }
           updated.score = calculateLeadScore(updated)
           return updated
         }),
       )
     },
-    [cardsExtra],
+    [cardsExtra, products],
   )
 
   const updateCardPriority = useCallback(

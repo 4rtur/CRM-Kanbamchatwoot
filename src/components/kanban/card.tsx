@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { MessageSquare, Clock, User, Phone, CheckSquare, Info, MessagesSquare } from 'lucide-react'
+import { MessageSquare, Clock, User, Phone, CheckSquare, Info, MessagesSquare, Package } from 'lucide-react'
 import { LeadScoreBadge } from './lead-score'
 import { usePipelineStore } from '@/lib/store/pipeline-store'
 import { isEmbedded } from '@/lib/dashboard-app'
@@ -235,12 +235,20 @@ export function KanbanCard({ card, onClick }: KanbanCardProps) {
         </div>
       )}
 
-      {/* Value */}
-      {card.value > 0 && (
-        <div className="mt-1.5">
-          <span className="text-xs font-semibold text-green-400">
-            {formatCurrency(card.value)}
-          </span>
+      {/* Value + Products count */}
+      {(card.value > 0 || card.products.length > 0) && (
+        <div className="mt-1.5 flex items-center gap-2">
+          {card.value > 0 && (
+            <span className="text-xs font-semibold text-green-400">
+              {formatCurrency(card.value)}
+            </span>
+          )}
+          {card.products.length > 0 && (
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <Package className="size-3" />
+              {card.products.length} {card.products.length === 1 ? 'produto' : 'produtos'}
+            </span>
+          )}
         </div>
       )}
 
