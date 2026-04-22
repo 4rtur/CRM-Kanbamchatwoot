@@ -145,6 +145,56 @@ export const automationRuleInputSchema = z.object({
 
 export const automationRuleUpdateSchema = automationRuleInputSchema.partial()
 
+const hhmmRegex = /^([01]\d|2[0-3]):[0-5]\d$/
+
+export const assignmentRuleInputSchema = z
+  .object({
+    pipelineId: z.string().min(1),
+    agentId: z.number().int().positive(),
+    agentName: z.string().min(1).max(200),
+    weekdays: z.array(z.number().int().min(0).max(6)).min(1, 'Selecione ao menos 1 dia'),
+    startTime: z.string().regex(hhmmRegex, 'Formato HH:MM'),
+    endTime: z.string().regex(hhmmRegex, 'Formato HH:MM'),
+    enabled: z.boolean().default(true),
+  })
+  .superRefine((data, ctx) => {
+    const [sh, sm] = data.startTime.split(':').map(Number)
+    const [eh, em] = data.endTime.split(':').map(Number)
+    const start = sh * 60 + sm
+    const end = eh * 60 + em
+    if (end <= start) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['endTime'],
+        message: 'Hora final deve ser maior que inicial (turno overnight não suportado ainda — use 2 regras)',
+      })
+    }
+  })
+
+export const assignmentRuleUpdateSchema = z
+  .object({
+    pipelineId: z.string().min(1).optional(),
+    agentId: z.number().int().positive().optional(),
+    agentName: z.string().min(1).max(200).optional(),
+    weekdays: z.array(z.number().int().min(0).max(6)).min(1).optional(),
+    startTime: z.string().regex(hhmmRegex).optional(),
+    endTime: z.string().regex(hhmmRegex).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.startTime && data.endTime) {
+      const [sh, sm] = data.startTime.split(':').map(Number)
+      const [eh, em] = data.endTime.split(':').map(Number)
+      if (eh * 60 + em <= sh * 60 + sm) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['endTime'],
+          message: 'Hora final deve ser maior que inicial',
+        })
+      }
+    }
+  })
+
 export const productCategoryInputSchema = z.object({
   name: z.string().min(1).max(100),
   color: z

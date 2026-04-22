@@ -80,6 +80,7 @@ const PRODUCTS_STORAGE_KEY = 'chatwoot-crm-products'
 const AUTO_MOVE_STORAGE_KEY = 'chatwoot-crm-auto-move'
 const ACCESS_CONTROL_STORAGE_KEY = 'chatwoot-crm-access-control'
 const AUTO_SYNC_ENABLED_KEY = 'chatwoot-crm-auto-sync-enabled'
+const AUTO_ASSIGNMENT_ENABLED_KEY = 'chatwoot-crm-auto-assignment-enabled'
 const AUTO_SYNC_INTERVAL_MS = 30_000
 
 interface CardsExtraData {
@@ -122,6 +123,7 @@ interface PipelineStore {
   useMockData: boolean
   autoMoveEnabled: boolean
   autoSyncEnabled: boolean
+  autoAssignmentEnabled: boolean
   accessControl: AccessControl
 
   setActivePipeline: (id: string) => void
@@ -148,6 +150,7 @@ interface PipelineStore {
   addCard: (card: CrmCard) => void
   setAutoMoveEnabled: (enabled: boolean) => void
   setAutoSyncEnabled: (enabled: boolean) => void
+  setAutoAssignmentEnabled: (enabled: boolean) => void
   setAccessControl: (pipelineId: string, visibleTo: 'all' | number[]) => void
   syncConversations: (options?: { silent?: boolean }) => Promise<number>
   hydrateCardConversations: (cardId: string) => Promise<ChatwootConversation[]>
@@ -253,6 +256,47 @@ function loadAutoSyncEnabled(): boolean {
 function saveAutoSyncEnabled(enabled: boolean): void {
   if (typeof window === 'undefined') return
   localStorage.setItem(AUTO_SYNC_ENABLED_KEY, String(enabled))
+}
+
+function loadAutoAssignmentEnabled(): boolean {
+  if (typeof window === 'undefined') return false
+  return localStorage.getItem(AUTO_ASSIGNMENT_ENABLED_KEY) === 'true'
+}
+
+function saveAutoAssignmentEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(AUTO_ASSIGNMENT_ENABLED_KEY, String(enabled))
+}
+
+interface AssignApiResponse {
+  success: boolean
+  data?: {
+    agent: { agentId: number; agentName: string; ruleId: string } | null
+    reason?: string
+  }
+}
+
+async function requestAutoAssignment(
+  pipelineId: string,
+  contactId: number,
+): Promise<{ agentId: number; agentName: string } | null> {
+  try {
+    const response = await fetch('/api/crm/assignment-rules/assign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pipelineId,
+        entityType: 'contact',
+        entityId: String(contactId),
+      }),
+    })
+    if (!response.ok) return null
+    const json = (await response.json()) as AssignApiResponse
+    if (!json.success || !json.data?.agent) return null
+    return { agentId: json.data.agent.agentId, agentName: json.data.agent.agentName }
+  } catch {
+    return null
+  }
 }
 
 function buildMockCards(extraData: CardsExtraData): CrmCard[] {
@@ -378,6 +422,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
   const [cardsExtra, setCardsExtra] = useState<CardsExtraData>({})
   const [autoMoveEnabled, setAutoMoveEnabledState] = useState(false)
   const [autoSyncEnabled, setAutoSyncEnabledState] = useState(true)
+  const [autoAssignmentEnabled, setAutoAssignmentEnabledState] = useState(false)
   const [accessControl, setAccessControlState] = useState<AccessControl>({})
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false)
   const [lastRealtimeEventAt, setLastRealtimeEventAt] = useState<number | null>(null)
@@ -431,6 +476,9 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
 
     const storedAutoSync = loadAutoSyncEnabled()
     setAutoSyncEnabledState(storedAutoSync)
+
+    const storedAutoAssignment = loadAutoAssignmentEnabled()
+    setAutoAssignmentEnabledState(storedAutoAssignment)
 
     const storedAccess = loadAccessControl()
     setAccessControlState(storedAccess)
@@ -665,6 +713,33 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     return cleanup
   }, [loadData])
 
+  // Aplica regras de auto-atribuição aos novos cards (se toggle ativo).
+  // Retorna array de cards com assignedAgent populado quando uma regra ativa casou.
+  const applyAutoAssignment = useCallback(
+    async (newCards: CrmCard[]): Promise<CrmCard[]> => {
+      if (!autoAssignmentEnabled || newCards.length === 0) return newCards
+
+      const results = await Promise.all(
+        newCards.map(async (card) => {
+          const assigned = await requestAutoAssignment(card.pipelineId, card.contactId)
+          if (!assigned) return card
+          const fullAgent = agents.find((a) => a.id === assigned.agentId)
+          const agentToApply: ChatwootAgent = fullAgent ?? {
+            id: assigned.agentId,
+            name: assigned.agentName,
+            email: '',
+            thumbnail: '',
+            availability_status: 'offline',
+            role: 'agent',
+          }
+          return { ...card, assignedAgent: agentToApply }
+        }),
+      )
+      return results
+    },
+    [autoAssignmentEnabled, agents],
+  )
+
   // Auto-sync: poll Chatwoot periodicamente (não bloqueante)
   // Cleanup: clear interval when disabled or component unmounts
   useEffect(() => {
@@ -682,7 +757,8 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
           if (!pipeline) return
           const result = await syncConversationsToCards(pipeline, cards)
           if (result.newCards.length > 0) {
-            setCards((prev) => [...prev, ...result.newCards])
+            const assignedCards = await applyAutoAssignment(result.newCards)
+            setCards((prev) => [...prev, ...assignedCards])
             showToast(`${result.totalImported} novo(s) lead(s) recebido(s)`, 'success')
           }
         } catch {
@@ -694,7 +770,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     return () => {
       clearInterval(intervalId)
     }
-  }, [autoSyncEnabled, useMockData, pipelines, activePipelineId, cards])
+  }, [autoSyncEnabled, useMockData, pipelines, activePipelineId, cards, applyAutoAssignment])
 
   const setActivePipeline = useCallback((id: string) => {
     setActivePipelineId(id)
@@ -1147,7 +1223,8 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
 
       const result = await syncConversationsToCards(pipeline, cards)
       if (result.newCards.length > 0) {
-        setCards((prev) => [...prev, ...result.newCards])
+        const assignedCards = await applyAutoAssignment(result.newCards)
+        setCards((prev) => [...prev, ...assignedCards])
         if (silent) {
           showToast(`${result.totalImported} novo(s) lead(s) recebido(s)`, 'success')
         } else {
@@ -1167,7 +1244,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsSyncing(false)
     }
-  }, [useMockData, pipelines, activePipelineId, cards])
+  }, [useMockData, pipelines, activePipelineId, cards, applyAutoAssignment])
 
   const hydrateCardConversations = useCallback(async (cardId: string): Promise<ChatwootConversation[]> => {
     const card = cards.find((c) => c.id === cardId)
@@ -1192,6 +1269,15 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     showToast(
       enabled ? 'Auto-sync ativado' : 'Auto-sync pausado',
       enabled ? 'success' : 'info',
+    )
+  }, [])
+
+  const setAutoAssignmentEnabled = useCallback((enabled: boolean) => {
+    setAutoAssignmentEnabledState(enabled)
+    saveAutoAssignmentEnabled(enabled)
+    showToast(
+      enabled ? 'Auto-atribuição ativada' : 'Auto-atribuição desativada',
+      'info',
     )
   }, [])
 
@@ -1352,6 +1438,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       useMockData,
       autoMoveEnabled,
       autoSyncEnabled,
+      autoAssignmentEnabled,
       accessControl,
       chatwootUrl,
       chatwootAccountId,
@@ -1379,6 +1466,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       addCard,
       setAutoMoveEnabled,
       setAutoSyncEnabled,
+      setAutoAssignmentEnabled,
       setAccessControl: setAccessControlFn,
       syncConversations,
       hydrateCardConversations,
@@ -1403,6 +1491,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       useMockData,
       autoMoveEnabled,
       autoSyncEnabled,
+      autoAssignmentEnabled,
       accessControl,
       chatwootUrl,
       chatwootAccountId,
@@ -1430,6 +1519,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       addCard,
       setAutoMoveEnabled,
       setAutoSyncEnabled,
+      setAutoAssignmentEnabled,
       setAccessControlFn,
       syncConversations,
       hydrateCardConversations,

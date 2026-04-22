@@ -24,16 +24,22 @@ export type AuditAction =
   | 'category.created'
   | 'category.updated'
   | 'category.deleted'
+  | 'assignment_rule.created'
+  | 'assignment_rule.updated'
+  | 'assignment_rule.deleted'
+  | 'assignment_rule.applied'
 
 export type AuditEntityType =
   | 'card'
   | 'deal'
+  | 'contact'
   | 'pipeline'
   | 'stage'
   | 'product'
   | 'automation'
   | 'category'
   | 'label'
+  | 'assignment_rule'
 
 export interface LogAuditInput {
   tenantId: string
