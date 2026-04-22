@@ -1,17 +1,56 @@
 services:
   crm:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chatwoot-crm:latest
+    container_name: chatwoot-crm
+    restart: always
     ports:
-      - '127.0.0.1:3005:3000'
+      - '127.0.0.1:${CRM_PORT:-3005}:3000'
     env_file:
       - .env
     environment:
       - NODE_ENV=production
-    restart: always
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
     networks:
-      - default
       - chatwoot_default
-    depends_on: []
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    image: chatwoot-crm-migrate:latest
+    container_name: chatwoot-crm-migrate
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    networks:
+      - chatwoot_default
+    restart: 'no'
+    command: npm run db:migrate
+
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    image: chatwoot-crm-migrate:latest
+    container_name: chatwoot-crm-seed
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    networks:
+      - chatwoot_default
+    restart: 'no'
+    profiles:
+      - seed
+    command: npm run db:seed
 
 networks:
   chatwoot_default:

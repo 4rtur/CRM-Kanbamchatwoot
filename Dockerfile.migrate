@@ -1,0 +1,15 @@
+# Imagem dedicada para rodar migrations + seed (não é usada em produção).
+# Mantém node_modules completos e código-fonte para executar `tsx` via `npm run db:migrate`.
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+CMD ["npm", "run", "db:migrate"]
