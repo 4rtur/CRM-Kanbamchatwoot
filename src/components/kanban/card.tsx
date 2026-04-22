@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -7,7 +8,7 @@ import { MessageSquare, Clock, User, Phone, CheckSquare, Info, MessagesSquare } 
 import { LeadScoreBadge } from './lead-score'
 import { usePipelineStore } from '@/lib/store/pipeline-store'
 import { isEmbedded } from '@/lib/dashboard-app'
-import type { CrmCard } from '@/lib/chatwoot/types'
+import type { CrmCard, ChatwootConversation } from '@/lib/chatwoot/types'
 
 interface KanbanCardProps {
   card: CrmCard
@@ -81,8 +82,14 @@ const PRIORITY_COLORS: Record<string, string> = {
   baixa: 'bg-green-500',
 }
 
+function pickMostRecentConversation(conversations: ChatwootConversation[]): ChatwootConversation | null {
+  if (conversations.length === 0) return null
+  return [...conversations].sort((a, b) => b.last_activity_at - a.last_activity_at)[0]
+}
+
 export function KanbanCard({ card, onClick }: KanbanCardProps) {
-  const { chatwootUrl, chatwootAccountId, useMockData } = usePipelineStore()
+  const { chatwootUrl, chatwootAccountId, useMockData, hydrateCardConversations } = usePipelineStore()
+  const [isOpening, setIsOpening] = useState(false)
 
   const {
     attributes,
@@ -103,21 +110,40 @@ export function KanbanCard({ card, onClick }: KanbanCardProps) {
   const checklistTotal = card.checklist.length
   const lastNote = card.notes.length > 0 ? card.notes[card.notes.length - 1] : null
 
-  const conversationId = card.conversations[0]?.id
   const hasChatwoot = Boolean(chatwootUrl && chatwootAccountId && !useMockData)
-  const chatwootTarget = hasChatwoot
-    ? conversationId
-      ? `${chatwootUrl}/app/accounts/${chatwootAccountId}/conversations/${conversationId}`
-      : `${chatwootUrl}/app/accounts/${chatwootAccountId}/contacts/${card.contactId}`
+  const contactUrl = hasChatwoot
+    ? `${chatwootUrl}/app/accounts/${chatwootAccountId}/contacts/${card.contactId}`
     : null
 
-  function handleConversationClick(e: React.MouseEvent): void {
+  function buildConversationUrl(conversationId: number): string {
+    return `${chatwootUrl}/app/accounts/${chatwootAccountId}/conversations/${conversationId}`
+  }
+
+  async function handleConversationClick(e: React.MouseEvent): Promise<void> {
     e.stopPropagation()
-    if (chatwootTarget) {
-      openChatwootUrl(chatwootTarget)
-    } else {
-      // Sem Chatwoot configurado, fallback para detalhes
+    if (!hasChatwoot) {
       onClick(card)
+      return
+    }
+
+    const cached = pickMostRecentConversation(card.conversations)
+    if (cached) {
+      openChatwootUrl(buildConversationUrl(cached.id))
+      return
+    }
+
+    setIsOpening(true)
+    try {
+      const conversations = await hydrateCardConversations(card.id)
+      const conv = pickMostRecentConversation(conversations)
+      if (conv) {
+        openChatwootUrl(buildConversationUrl(conv.id))
+      } else if (contactUrl) {
+        // Sem conversa para esse contato — fallback pra página do contato
+        openChatwootUrl(contactUrl)
+      }
+    } finally {
+      setIsOpening(false)
     }
   }
 
@@ -135,10 +161,10 @@ export function KanbanCard({ card, onClick }: KanbanCardProps) {
       data-card-id={card.id}
       data-card-root="true"
       onClick={handleConversationClick}
-      className={`group animate-in fade-in slide-in-from-bottom-2 cursor-pointer rounded-lg border border-border/50 bg-card p-3 shadow-sm transition-all duration-200 hover:shadow-lg hover:shadow-[#1F93FF]/5 hover:border-[#1F93FF]/30 ${
+      className={`group animate-in fade-in slide-in-from-bottom-2 rounded-lg border border-border/50 bg-card p-3 shadow-sm transition-all duration-200 hover:shadow-lg hover:shadow-[#1F93FF]/5 hover:border-[#1F93FF]/30 ${
         isDragging ? 'z-50 rotate-2 opacity-90 shadow-xl' : ''
-      }`}
-      title={chatwootTarget ? 'Abrir conversação no Chatwoot' : 'Abrir detalhes'}
+      } ${isOpening ? 'cursor-wait opacity-70' : 'cursor-pointer'}`}
+      title={hasChatwoot ? 'Abrir conversação no Chatwoot' : 'Abrir detalhes'}
     >
       {/* Header: Avatar + Name + Priority + Score + Link */}
       <div className="flex items-start gap-2.5">
@@ -162,7 +188,7 @@ export function KanbanCard({ card, onClick }: KanbanCardProps) {
               {card.contact.name}
             </p>
             <div className="flex items-center gap-1">
-              {chatwootTarget && (
+              {hasChatwoot && (
                 <span
                   className="flex size-5 items-center justify-center rounded text-[#1F93FF]"
                   title="Clique no card para abrir conversação"

@@ -42,6 +42,7 @@ import {
   listAgents as fetchAgents,
   listLabels as fetchLabels,
   listInboxes as fetchInboxes,
+  listContactConversations,
   updateContactCustomAttributes,
   updateContactLabels as apiUpdateContactLabels,
   createContact as apiCreateContact,
@@ -149,6 +150,7 @@ interface PipelineStore {
   setAutoSyncEnabled: (enabled: boolean) => void
   setAccessControl: (pipelineId: string, visibleTo: 'all' | number[]) => void
   syncConversations: (options?: { silent?: boolean }) => Promise<number>
+  hydrateCardConversations: (cardId: string) => Promise<ChatwootConversation[]>
 
   activePipeline: CrmPipeline | undefined
   filteredCards: CrmCard[]
@@ -1167,6 +1169,23 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     }
   }, [useMockData, pipelines, activePipelineId, cards])
 
+  const hydrateCardConversations = useCallback(async (cardId: string): Promise<ChatwootConversation[]> => {
+    const card = cards.find((c) => c.id === cardId)
+    if (!card) return []
+    if (card.conversations.length > 0) return card.conversations
+    if (useMockData) return []
+
+    try {
+      const conversations = await listContactConversations(card.contactId)
+      setCards((prev) =>
+        prev.map((c) => (c.id === cardId ? { ...c, conversations } : c)),
+      )
+      return conversations
+    } catch {
+      return []
+    }
+  }, [cards, useMockData])
+
   const setAutoSyncEnabled = useCallback((enabled: boolean) => {
     setAutoSyncEnabledState(enabled)
     saveAutoSyncEnabled(enabled)
@@ -1362,6 +1381,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       setAutoSyncEnabled,
       setAccessControl: setAccessControlFn,
       syncConversations,
+      hydrateCardConversations,
       activePipeline,
       filteredCards,
       isRealtimeConnected,
@@ -1412,6 +1432,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       setAutoSyncEnabled,
       setAccessControlFn,
       syncConversations,
+      hydrateCardConversations,
       activePipeline,
       filteredCards,
       isRealtimeConnected,
