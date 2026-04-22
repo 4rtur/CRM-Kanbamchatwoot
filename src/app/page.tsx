@@ -13,6 +13,9 @@ import { useTheme } from '@/lib/theme'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { isEmbedded } from '@/lib/dashboard-app'
+import { UserMenu } from '@/components/auth/user-menu'
+import { useUser } from '@/lib/auth/use-user'
+import { hasPermission } from '@/lib/auth/permissions'
 
 function RealtimeIndicator() {
   const { isRealtimeConnected, lastRealtimeEventAt } = usePipelineStore()
@@ -173,8 +176,18 @@ function GlobalKeyboardShortcuts() {
 }
 
 function CrmApp() {
-  const { useMockData, refreshData, isLoading, isSyncing, syncConversations } = usePipelineStore()
+  const { useMockData, refreshData, isLoading, isSyncing, syncConversations, filters, setFilters } = usePipelineStore()
   const { theme, toggleTheme } = useTheme()
+  const { user } = useUser()
+  const canViewReports = hasPermission(user, 'reports:view')
+  const canAccessSettings = hasPermission(user, 'settings:access')
+  const onlyAssigned = user ? hasPermission(user, 'cards:view_assigned_only') && !hasPermission(user, 'cards:view_all') : false
+
+  useEffect(() => {
+    if (onlyAssigned && user && filters.agentId !== user.id) {
+      setFilters({ agentId: user.id })
+    }
+  }, [onlyAssigned, user, filters.agentId, setFilters])
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -218,18 +231,22 @@ function CrmApp() {
           >
             {theme === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
           </Button>
-          <Link href="/relatorios">
-            <Button variant="ghost" size="sm">
-              <BarChart3 className="size-3.5" data-icon="inline-start" />
-              Relatórios
-            </Button>
-          </Link>
-          <Link href="/produtos">
-            <Button variant="ghost" size="sm">
-              <Package className="size-3.5" data-icon="inline-start" />
-              Produtos
-            </Button>
-          </Link>
+          {canViewReports && (
+            <Link href="/relatorios">
+              <Button variant="ghost" size="sm">
+                <BarChart3 className="size-3.5" data-icon="inline-start" />
+                Relatórios
+              </Button>
+            </Link>
+          )}
+          {canAccessSettings && (
+            <Link href="/produtos">
+              <Button variant="ghost" size="sm">
+                <Package className="size-3.5" data-icon="inline-start" />
+                Produtos
+              </Button>
+            </Link>
+          )}
           <Button
             variant="ghost"
             size="icon-sm"
@@ -239,11 +256,14 @@ function CrmApp() {
           >
             <RefreshCw className={`size-3.5 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
-          <Link href="/settings">
-            <Button variant="ghost" size="icon-sm" title="Configurações">
-              <Settings className="size-3.5" />
-            </Button>
-          </Link>
+          {canAccessSettings && (
+            <Link href="/settings">
+              <Button variant="ghost" size="icon-sm" title="Configurações">
+                <Settings className="size-3.5" />
+              </Button>
+            </Link>
+          )}
+          <UserMenu />
         </div>
       </header>
 

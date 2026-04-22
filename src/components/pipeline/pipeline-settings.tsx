@@ -18,6 +18,8 @@ import { Settings2, Plus, Trash2, GripVertical, LayoutTemplate, Eye, EyeOff } fr
 import { usePipelineStore } from '@/lib/store/pipeline-store'
 import { AutomationSettings } from './automation-settings'
 import type { CrmPipeline, CrmStage } from '@/lib/chatwoot/types'
+import { useUser } from '@/lib/auth/use-user'
+import { hasPermission } from '@/lib/auth/permissions'
 
 const STAGE_COLORS = [
   '#6B7280',
@@ -113,6 +115,10 @@ export function PipelineSettings() {
     accessControl,
     setAccessControl,
   } = usePipelineStore()
+  const { user } = useUser()
+  const canCreatePipeline = hasPermission(user, 'pipelines:create')
+  const canDeletePipeline = hasPermission(user, 'pipelines:delete')
+  const canManageAutomations = hasPermission(user, 'automations:manage')
   const [open, setOpen] = useState(false)
   const [editingPipeline, setEditingPipeline] = useState<CrmPipeline | null>(null)
   const [pipelineName, setPipelineName] = useState('')
@@ -259,7 +265,9 @@ export function PipelineSettings() {
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList variant="line">
             <TabsTrigger value="pipelines">Pipelines</TabsTrigger>
-            <TabsTrigger value="automations">Automações</TabsTrigger>
+            {canManageAutomations && (
+              <TabsTrigger value="automations">Automações</TabsTrigger>
+            )}
             <TabsTrigger value="access">Visibilidade</TabsTrigger>
           </TabsList>
 
@@ -330,7 +338,7 @@ export function PipelineSettings() {
                         >
                           <Settings2 className="size-3.5" />
                         </Button>
-                        {pipelines.length > 1 && (
+                        {pipelines.length > 1 && canDeletePipeline && (
                           <Button
                             variant="ghost"
                             size="icon-sm"
@@ -342,14 +350,16 @@ export function PipelineSettings() {
                       </div>
                     </div>
                   ))}
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={handleCreateNew}
-                  >
-                    <Plus className="size-3.5" data-icon="inline-start" />
-                    Novo Pipeline
-                  </Button>
+                  {canCreatePipeline && (
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={handleCreateNew}
+                    >
+                      <Plus className="size-3.5" data-icon="inline-start" />
+                      Novo Pipeline
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-4 py-2">

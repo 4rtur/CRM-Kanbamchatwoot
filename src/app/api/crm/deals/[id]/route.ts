@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { and, eq } from 'drizzle-orm'
 import { db, schema } from '@/lib/db'
+import { logAuditFromRequest } from '@/lib/db/audit'
 import { resolveTenantId, tenantErrorResponse } from '@/lib/crm/tenant'
 import { badRequest, dealUpdateSchema, notFound, ok } from '@/lib/crm/schemas'
 
@@ -53,6 +54,12 @@ export async function PATCH(request: NextRequest, context: Context): Promise<Res
       patch.chatwootConversationId = parsed.data.chatwootConversationId
     }
 
+    const [previous] = await db
+      .select()
+      .from(schema.deals)
+      .where(and(eq(schema.deals.id, id), eq(schema.deals.tenantId, tenantId)))
+      .limit(1)
+
     const [row] = await db
       .update(schema.deals)
       .set(patch)
@@ -60,6 +67,23 @@ export async function PATCH(request: NextRequest, context: Context): Promise<Res
       .returning()
 
     if (!row) return notFound()
+
+    if (previous && parsed.data.stageId !== undefined && previous.stageId !== row.stageId) {
+      const sameTPipeline = parsed.data.pipelineId === undefined || previous.pipelineId === row.pipelineId
+      await logAuditFromRequest(request, {
+        tenantId,
+        action: sameTPipeline ? 'card.moved' : 'card.pipeline_moved',
+        entityType: 'deal',
+        entityId: row.id,
+        details: {
+          fromStageId: previous.stageId,
+          toStageId: row.stageId,
+          fromPipelineId: previous.pipelineId,
+          toPipelineId: row.pipelineId,
+        },
+      })
+    }
+
     return ok(row)
   } catch (error: unknown) {
     return tenantErrorResponse(error)

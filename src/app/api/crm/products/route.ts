@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { asc, eq } from 'drizzle-orm'
 import { db, schema } from '@/lib/db'
+import { logAuditFromRequest } from '@/lib/db/audit'
 import { resolveTenantId, tenantErrorResponse } from '@/lib/crm/tenant'
 import { newId } from '@/lib/crm/uid'
 import { badRequest, ok, productInputSchema } from '@/lib/crm/schemas'
@@ -38,6 +39,14 @@ export async function POST(request: NextRequest): Promise<Response> {
         price: String(parsed.data.price),
       })
       .returning()
+
+    await logAuditFromRequest(request, {
+      tenantId,
+      action: 'product.created',
+      entityType: 'product',
+      entityId: row.id,
+      details: { name: row.name, category: row.category, price: row.price },
+    })
 
     return ok(row, { status: 201 })
   } catch (error: unknown) {

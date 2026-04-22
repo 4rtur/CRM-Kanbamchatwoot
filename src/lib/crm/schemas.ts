@@ -145,12 +145,24 @@ export const automationRuleInputSchema = z.object({
 
 export const automationRuleUpdateSchema = automationRuleInputSchema.partial()
 
+export const productCategoryInputSchema = z.object({
+  name: z.string().min(1).max(100),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .default('#71717a'),
+  order: z.number().int().nonnegative().default(0),
+})
+
+export const productCategoryUpdateSchema = productCategoryInputSchema.partial()
+
 export const migrateFromLocalStoragePayloadSchema = z.object({
   pipelines: z.array(z.unknown()).optional(),
   products: z.array(z.unknown()).optional(),
   automations: z.array(z.unknown()).optional(),
   cardsExtra: z.record(z.string(), z.unknown()).optional(),
   accessControl: z.record(z.string(), z.unknown()).optional(),
+  categories: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])).optional(),
 })
 
 export type ApiResponse<T> = {

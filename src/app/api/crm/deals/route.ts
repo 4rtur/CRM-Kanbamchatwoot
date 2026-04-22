@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { and, desc, eq } from 'drizzle-orm'
 import { db, schema } from '@/lib/db'
+import { logAuditFromRequest } from '@/lib/db/audit'
 import { resolveTenantId, tenantErrorResponse } from '@/lib/crm/tenant'
 import { newId } from '@/lib/crm/uid'
 import { badRequest, dealInputSchema, ok } from '@/lib/crm/schemas'
@@ -63,6 +64,18 @@ export async function POST(request: NextRequest): Promise<Response> {
         score: parsed.data.score ?? 0,
       })
       .returning()
+
+    await logAuditFromRequest(request, {
+      tenantId,
+      action: 'card.created',
+      entityType: 'deal',
+      entityId: row.id,
+      details: {
+        chatwootContactId: row.chatwootContactId,
+        pipelineId: row.pipelineId,
+        stageId: row.stageId,
+      },
+    })
 
     return ok(row, { status: 201 })
   } catch (error: unknown) {

@@ -6,6 +6,7 @@ const LS_KEYS = {
   products: 'chatwoot-crm-products',
   automations: 'chatwoot-crm-automations',
   accessControl: 'chatwoot-crm-access-control',
+  categories: 'chatwoot-crm-categories',
 } as const
 
 function readJson<T>(key: string): T | null {
@@ -29,6 +30,7 @@ export async function migrateFromLocalStorage(): Promise<{
     products: readJson<unknown[]>(LS_KEYS.products) ?? undefined,
     automations: readJson<unknown[]>(LS_KEYS.automations) ?? undefined,
     accessControl: readJson<Record<string, unknown>>(LS_KEYS.accessControl) ?? undefined,
+    categories: readJson<unknown[]>(LS_KEYS.categories) ?? undefined,
   }
 
   const res = await fetch('/api/crm/migrate', {

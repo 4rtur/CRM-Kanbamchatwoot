@@ -1,10 +1,22 @@
 import { NextRequest } from 'next/server'
+import { getSessionFromRequest } from '@/lib/auth/server'
 
-function getCredentials(request: NextRequest): {
+async function getCredentials(request: NextRequest): Promise<{
   chatwootUrl: string | null
   chatwootToken: string | null
   accountId: string | null
-} {
+}> {
+  // 1) Prioridade: sessão do usuário (token pessoal do Chatwoot)
+  const session = await getSessionFromRequest(request)
+  if (session?.chatwootToken && session?.chatwootUrl && session?.accountId) {
+    return {
+      chatwootUrl: session.chatwootUrl,
+      chatwootToken: session.chatwootToken,
+      accountId: String(session.accountId),
+    }
+  }
+
+  // 2) Fallback: env vars (modo demo / operações de sistema)
   const envUrl = process.env.CHATWOOT_URL
   const envToken = process.env.CHATWOOT_API_TOKEN
   const envAccountId = process.env.CHATWOOT_ACCOUNT_ID
@@ -17,6 +29,7 @@ function getCredentials(request: NextRequest): {
     }
   }
 
+  // 3) Fallback legado: headers (localStorage client-side)
   return {
     chatwootUrl: request.headers.get('x-chatwoot-url'),
     chatwootToken: request.headers.get('x-chatwoot-token'),
@@ -29,7 +42,7 @@ async function proxyRequest(
   { params }: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {
   const { path } = await params
-  const { chatwootUrl, chatwootToken, accountId } = getCredentials(request)
+  const { chatwootUrl, chatwootToken, accountId } = await getCredentials(request)
 
   if (!chatwootUrl || !chatwootToken || !accountId) {
     return Response.json(

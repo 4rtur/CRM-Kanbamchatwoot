@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { and, eq } from 'drizzle-orm'
 import { db, schema } from '@/lib/db'
+import { logAuditFromRequest } from '@/lib/db/audit'
 import { resolveTenantId, tenantErrorResponse } from '@/lib/crm/tenant'
 import { newId } from '@/lib/crm/uid'
 import { automationRuleInputSchema, badRequest, ok } from '@/lib/crm/schemas'
@@ -46,6 +47,14 @@ export async function POST(request: NextRequest): Promise<Response> {
         actionValue: parsed.data.actionValue ?? null,
       })
       .returning()
+
+    await logAuditFromRequest(request, {
+      tenantId,
+      action: 'automation.created',
+      entityType: 'automation',
+      entityId: row.id,
+      details: { name: row.name, pipelineId: row.pipelineId },
+    })
 
     return ok(row, { status: 201 })
   } catch (error: unknown) {

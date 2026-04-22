@@ -4,37 +4,17 @@ import { db, schema } from '@/lib/db'
 import { logAuditFromRequest } from '@/lib/db/audit'
 import { resolveTenantId, tenantErrorResponse } from '@/lib/crm/tenant'
 import { newId } from '@/lib/crm/uid'
-import { badRequest, ok, pipelineInputSchema } from '@/lib/crm/schemas'
+import { badRequest, ok, productCategoryInputSchema } from '@/lib/crm/schemas'
 
 export async function GET(request: NextRequest): Promise<Response> {
   try {
     const tenantId = await resolveTenantId(request)
-
-    const pipelines = await db
+    const rows = await db
       .select()
-      .from(schema.pipelines)
-      .where(eq(schema.pipelines.tenantId, tenantId))
-      .orderBy(asc(schema.pipelines.order))
-
-    const stages = await db
-      .select()
-      .from(schema.stages)
-      .where(eq(schema.stages.tenantId, tenantId))
-      .orderBy(asc(schema.stages.order))
-
-    const stagesByPipeline = new Map<string, typeof stages>()
-    for (const stage of stages) {
-      const list = stagesByPipeline.get(stage.pipelineId) ?? []
-      list.push(stage)
-      stagesByPipeline.set(stage.pipelineId, list)
-    }
-
-    const payload = pipelines.map((pipeline) => ({
-      ...pipeline,
-      stages: stagesByPipeline.get(pipeline.id) ?? [],
-    }))
-
-    return ok(payload)
+      .from(schema.productCategories)
+      .where(eq(schema.productCategories.tenantId, tenantId))
+      .orderBy(asc(schema.productCategories.order), asc(schema.productCategories.name))
+    return ok(rows)
   } catch (error: unknown) {
     return tenantErrorResponse(error)
   }
@@ -44,25 +24,32 @@ export async function POST(request: NextRequest): Promise<Response> {
   try {
     const tenantId = await resolveTenantId(request)
     const body: unknown = await request.json()
-    const parsed = pipelineInputSchema.safeParse(body)
+    const parsed = productCategoryInputSchema.safeParse(body)
     if (!parsed.success) return badRequest(parsed.error.format())
 
-    const id = newId('pl')
+    const id = newId('cat')
     const [row] = await db
-      .insert(schema.pipelines)
+      .insert(schema.productCategories)
       .values({
         id,
         tenantId,
         name: parsed.data.name,
-        isDefault: parsed.data.isDefault ?? false,
-        order: parsed.data.order ?? 0,
+        color: parsed.data.color,
+        order: parsed.data.order,
+      })
+      .onConflictDoNothing({
+        target: [schema.productCategories.tenantId, schema.productCategories.name],
       })
       .returning()
 
+    if (!row) {
+      return badRequest({ message: 'Categoria já existe para este tenant' })
+    }
+
     await logAuditFromRequest(request, {
       tenantId,
-      action: 'pipeline.created',
-      entityType: 'pipeline',
+      action: 'category.created',
+      entityType: 'category',
       entityId: row.id,
       details: { name: row.name },
     })

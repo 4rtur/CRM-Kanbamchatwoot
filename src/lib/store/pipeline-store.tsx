@@ -65,6 +65,7 @@ import {
   updateAutomationInDb,
   deleteAutomationInDb,
 } from '@/lib/store/db-persistence'
+import { autoMigrateIfNeeded } from '@/lib/db/migrate-local'
 import {
   initRealtime,
   broadcastEvent,
@@ -383,6 +384,10 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
   const loadData = useCallback(async () => {
     setIsLoading(true)
     setError(null)
+
+    // Auto-migração de localStorage → banco (1x por browser). Silenciosa em caso
+    // de falha — fallback para localStorage segue funcionando.
+    await autoMigrateIfNeeded()
 
     let resolvedPipelines: CrmPipeline[]
     try {

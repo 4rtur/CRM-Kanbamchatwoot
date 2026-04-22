@@ -1,57 +1,42 @@
 import type { NextRequest } from 'next/server'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { db, schema } from '@/lib/db'
 import { logAuditFromRequest } from '@/lib/db/audit'
 import { resolveTenantId, tenantErrorResponse } from '@/lib/crm/tenant'
-import { badRequest, notFound, ok, pipelineUpdateSchema } from '@/lib/crm/schemas'
+import { badRequest, notFound, ok, productCategoryUpdateSchema } from '@/lib/crm/schemas'
 
 type Context = { params: Promise<{ id: string }> }
-
-export async function GET(request: NextRequest, context: Context): Promise<Response> {
-  try {
-    const tenantId = await resolveTenantId(request)
-    const { id } = await context.params
-
-    const [pipeline] = await db
-      .select()
-      .from(schema.pipelines)
-      .where(and(eq(schema.pipelines.id, id), eq(schema.pipelines.tenantId, tenantId)))
-      .limit(1)
-
-    if (!pipeline) return notFound()
-
-    const stages = await db
-      .select()
-      .from(schema.stages)
-      .where(and(eq(schema.stages.pipelineId, id), eq(schema.stages.tenantId, tenantId)))
-      .orderBy(asc(schema.stages.order))
-
-    return ok({ ...pipeline, stages })
-  } catch (error: unknown) {
-    return tenantErrorResponse(error)
-  }
-}
 
 export async function PATCH(request: NextRequest, context: Context): Promise<Response> {
   try {
     const tenantId = await resolveTenantId(request)
     const { id } = await context.params
     const body: unknown = await request.json()
-    const parsed = pipelineUpdateSchema.safeParse(body)
+    const parsed = productCategoryUpdateSchema.safeParse(body)
     if (!parsed.success) return badRequest(parsed.error.format())
 
+    const patch: Record<string, unknown> = { updatedAt: new Date() }
+    if (parsed.data.name !== undefined) patch.name = parsed.data.name
+    if (parsed.data.color !== undefined) patch.color = parsed.data.color
+    if (parsed.data.order !== undefined) patch.order = parsed.data.order
+
     const [row] = await db
-      .update(schema.pipelines)
-      .set({ ...parsed.data, updatedAt: new Date() })
-      .where(and(eq(schema.pipelines.id, id), eq(schema.pipelines.tenantId, tenantId)))
+      .update(schema.productCategories)
+      .set(patch)
+      .where(
+        and(
+          eq(schema.productCategories.id, id),
+          eq(schema.productCategories.tenantId, tenantId),
+        ),
+      )
       .returning()
 
     if (!row) return notFound()
 
     await logAuditFromRequest(request, {
       tenantId,
-      action: 'pipeline.updated',
-      entityType: 'pipeline',
+      action: 'category.updated',
+      entityType: 'category',
       entityId: row.id,
       details: { patch: parsed.data },
     })
@@ -68,16 +53,21 @@ export async function DELETE(request: NextRequest, context: Context): Promise<Re
     const { id } = await context.params
 
     const [row] = await db
-      .delete(schema.pipelines)
-      .where(and(eq(schema.pipelines.id, id), eq(schema.pipelines.tenantId, tenantId)))
+      .delete(schema.productCategories)
+      .where(
+        and(
+          eq(schema.productCategories.id, id),
+          eq(schema.productCategories.tenantId, tenantId),
+        ),
+      )
       .returning()
 
     if (!row) return notFound()
 
     await logAuditFromRequest(request, {
       tenantId,
-      action: 'pipeline.deleted',
-      entityType: 'pipeline',
+      action: 'category.deleted',
+      entityType: 'category',
       entityId: row.id,
       details: { name: row.name },
     })

@@ -27,6 +27,8 @@ import {
 import Link from 'next/link'
 import { useTheme } from '@/lib/theme'
 import type { CrmProduct } from '@/lib/chatwoot/types'
+import { useUser } from '@/lib/auth/use-user'
+import { hasPermission } from '@/lib/auth/permissions'
 
 const DEFAULT_CATEGORIES = ['Tela', 'Bateria', 'Placa', 'Dados', 'Acessório', 'Outro']
 
@@ -228,6 +230,10 @@ function ProductForm({
 function ProdutosContent() {
   const { products, addProduct, updateProduct, deleteProduct } = usePipelineStore()
   const { theme, toggleTheme } = useTheme()
+  const { user } = useUser()
+  const canCreate = hasPermission(user, 'products:create')
+  const canEdit = hasPermission(user, 'products:edit')
+  const canDelete = hasPermission(user, 'products:delete')
   const [searchQuery, setSearchQuery] = useState('')
   const [filterCategory, setFilterCategory] = useState<string>('all')
   const [addOpen, setAddOpen] = useState(false)
@@ -311,15 +317,17 @@ function ProdutosContent() {
                 </DialogContent>
               </Dialog>
 
-              <Dialog open={addOpen} onOpenChange={setAddOpen}>
-                <DialogTrigger
-                  render={
-                    <Button size="sm">
-                      <Plus className="size-3.5" data-icon="inline-start" />
-                      Novo Produto
-                    </Button>
-                  }
-                />
+              <Dialog open={addOpen && canCreate} onOpenChange={(v) => canCreate && setAddOpen(v)}>
+                {canCreate && (
+                  <DialogTrigger
+                    render={
+                      <Button size="sm">
+                        <Plus className="size-3.5" data-icon="inline-start" />
+                        Novo Produto
+                      </Button>
+                    }
+                  />
+                )}
                 <DialogContent className="sm:max-w-md">
                   <DialogHeader>
                     <DialogTitle>Adicionar Produto</DialogTitle>
@@ -447,6 +455,12 @@ function ProdutosContent() {
                   )}
 
                   <div className="flex items-center gap-2 pt-2 border-t border-border/50 dark:border-white/[0.06]">
+                    {!canEdit && !canDelete && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Somente leitura.
+                      </p>
+                    )}
+                    {canEdit && (
                     <Dialog open={editProduct?.id === product.id} onOpenChange={(open) => { if (!open) setEditProduct(null) }}>
                       <DialogTrigger
                         render={
@@ -474,7 +488,9 @@ function ProdutosContent() {
                         )}
                       </DialogContent>
                     </Dialog>
+                    )}
 
+                    {canDelete && (
                     <Dialog open={deleteConfirm === product.id} onOpenChange={(open) => { if (!open) setDeleteConfirm(null) }}>
                       <DialogTrigger
                         render={
@@ -507,6 +523,7 @@ function ProdutosContent() {
                         </DialogFooter>
                       </DialogContent>
                     </Dialog>
+                    )}
                   </div>
                 </div>
               )
