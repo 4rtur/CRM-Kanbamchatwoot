@@ -3,14 +3,34 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { MessageSquare, Clock, User, Phone, CheckSquare, ExternalLink } from 'lucide-react'
+import { MessageSquare, Clock, User, Phone, CheckSquare, Info, MessagesSquare } from 'lucide-react'
 import { LeadScoreBadge } from './lead-score'
 import { usePipelineStore } from '@/lib/store/pipeline-store'
+import { isEmbedded } from '@/lib/dashboard-app'
 import type { CrmCard } from '@/lib/chatwoot/types'
 
 interface KanbanCardProps {
   card: CrmCard
   onClick: (card: CrmCard) => void
+}
+
+function openChatwootUrl(url: string): void {
+  if (typeof window === 'undefined') return
+  if (isEmbedded()) {
+    try {
+      window.parent.location.href = url
+      return
+    } catch {
+      // Se cross-origin bloquear, cai no postMessage
+      try {
+        window.parent.postMessage({ event: 'navigate', url }, '*')
+        return
+      } catch {
+        // fallback final
+      }
+    }
+  }
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 function getInitials(name: string): string {
@@ -84,9 +104,27 @@ export function KanbanCard({ card, onClick }: KanbanCardProps) {
   const lastNote = card.notes.length > 0 ? card.notes[card.notes.length - 1] : null
 
   const conversationId = card.conversations[0]?.id
-  const conversationUrl = conversationId && chatwootUrl && chatwootAccountId && !useMockData
-    ? `${chatwootUrl}/app/accounts/${chatwootAccountId}/conversations/${conversationId}`
+  const hasChatwoot = Boolean(chatwootUrl && chatwootAccountId && !useMockData)
+  const chatwootTarget = hasChatwoot
+    ? conversationId
+      ? `${chatwootUrl}/app/accounts/${chatwootAccountId}/conversations/${conversationId}`
+      : `${chatwootUrl}/app/accounts/${chatwootAccountId}/contacts/${card.contactId}`
     : null
+
+  function handleConversationClick(e: React.MouseEvent): void {
+    e.stopPropagation()
+    if (chatwootTarget) {
+      openChatwootUrl(chatwootTarget)
+    } else {
+      // Sem Chatwoot configurado, fallback para detalhes
+      onClick(card)
+    }
+  }
+
+  function handleDetailsClick(e: React.MouseEvent): void {
+    e.stopPropagation()
+    onClick(card)
+  }
 
   return (
     <div
@@ -94,10 +132,13 @@ export function KanbanCard({ card, onClick }: KanbanCardProps) {
       style={style}
       {...attributes}
       {...listeners}
-      onClick={() => onClick(card)}
+      data-card-id={card.id}
+      data-card-root="true"
+      onClick={handleConversationClick}
       className={`group animate-in fade-in slide-in-from-bottom-2 cursor-pointer rounded-lg border border-border/50 bg-card p-3 shadow-sm transition-all duration-200 hover:shadow-lg hover:shadow-[#1F93FF]/5 hover:border-[#1F93FF]/30 ${
         isDragging ? 'z-50 rotate-2 opacity-90 shadow-xl' : ''
       }`}
+      title={chatwootTarget ? 'Abrir conversação no Chatwoot' : 'Abrir detalhes'}
     >
       {/* Header: Avatar + Name + Priority + Score + Link */}
       <div className="flex items-start gap-2.5">
@@ -117,22 +158,29 @@ export function KanbanCard({ card, onClick }: KanbanCardProps) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-1">
-            <p className="truncate text-sm font-semibold text-foreground">
+            <p className="truncate text-sm font-semibold text-foreground hover:text-[#1F93FF] transition-colors">
               {card.contact.name}
             </p>
             <div className="flex items-center gap-1">
-              {conversationUrl && (
-                <a
-                  href={conversationUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="flex size-5 items-center justify-center rounded text-muted-foreground/50 opacity-0 transition-all group-hover:opacity-100 hover:bg-muted hover:text-[#1F93FF]"
-                  title="Abrir conversa no Chatwoot"
+              {chatwootTarget && (
+                <span
+                  className="flex size-5 items-center justify-center rounded text-[#1F93FF]"
+                  title="Clique no card para abrir conversação"
+                  aria-hidden="true"
                 >
-                  <ExternalLink className="size-3" />
-                </a>
+                  <MessagesSquare className="size-3.5" />
+                </span>
               )}
+              <button
+                type="button"
+                onClick={handleDetailsClick}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="flex size-5 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-all group-hover:opacity-100 hover:bg-muted hover:text-foreground"
+                title="Abrir detalhes para edição"
+                aria-label="Abrir detalhes"
+              >
+                <Info className="size-3.5" />
+              </button>
               <LeadScoreBadge score={card.score} />
             </div>
           </div>

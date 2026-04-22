@@ -8,10 +8,11 @@ import { PipelineStats } from '@/components/kanban/pipeline-stats'
 import { FilterBar } from '@/components/filters/filter-bar'
 import { ToastContainer } from '@/components/ui/toast-container'
 import { Button } from '@/components/ui/button'
-import { Settings, RefreshCw, Kanban, BarChart3, RefreshCcw, Sun, Moon, Package } from 'lucide-react'
+import { Settings, RefreshCw, Kanban, BarChart3, RefreshCcw, Sun, Moon, Package, Info, X } from 'lucide-react'
 import { useTheme } from '@/lib/theme'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { isEmbedded } from '@/lib/dashboard-app'
 
 function RealtimeIndicator() {
   const { isRealtimeConnected, lastRealtimeEventAt } = usePipelineStore()
@@ -56,12 +57,91 @@ function RealtimeIndicator() {
   )
 }
 
+function EmbedBanner() {
+  const [dismissed, setDismissed] = useState(false)
+  const [show, setShow] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const embedded = isEmbedded()
+    const onEmbedRoute = window.location.pathname.startsWith('/embed')
+    if (embedded && !onEmbedRoute) setShow(true)
+  }, [])
+
+  if (!show || dismissed) return null
+
+  return (
+    <div className="flex items-start gap-2 border-b border-[#1F93FF]/30 bg-[#1F93FF]/10 px-4 py-2 text-xs text-foreground">
+      <Info className="mt-0.5 size-3.5 shrink-0 text-[#1F93FF]" />
+      <p className="flex-1">
+        Você está vendo o board completo dentro do Chatwoot. Para uma visão focada no contato da conversação, configure o Dashboard App para apontar para <code className="rounded bg-muted px-1 py-0.5 text-[11px]">/embed</code>.
+      </p>
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        className="text-muted-foreground hover:text-foreground"
+        aria-label="Fechar aviso"
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
+  )
+}
+
+function GlobalKeyboardShortcuts() {
+  const { filteredCards, chatwootUrl, chatwootAccountId, useMockData } = usePipelineStore()
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const isMeta = e.metaKey || e.ctrlKey
+      if (!isMeta || e.key.toLowerCase() !== 'k') return
+
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+
+      e.preventDefault()
+
+      if (!chatwootUrl || !chatwootAccountId || useMockData) return
+
+      // Tenta card com foco (via data-card-id)
+      const focused = document.activeElement as HTMLElement | null
+      const focusedCardId = focused?.closest('[data-card-id]')?.getAttribute('data-card-id')
+      let target = focusedCardId ? filteredCards.find((c) => c.id === focusedCardId) : null
+      if (!target) target = filteredCards[0] ?? null
+      if (!target) return
+
+      const convId = target.conversations[0]?.id
+      const url = convId
+        ? `${chatwootUrl}/app/accounts/${chatwootAccountId}/conversations/${convId}`
+        : `${chatwootUrl}/app/accounts/${chatwootAccountId}/contacts/${target.contactId}`
+
+      if (isEmbedded()) {
+        try {
+          window.parent.location.href = url
+          return
+        } catch {
+          window.parent.postMessage({ event: 'navigate', url }, '*')
+          return
+        }
+      }
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [filteredCards, chatwootUrl, chatwootAccountId, useMockData])
+
+  return null
+}
+
 function CrmApp() {
   const { useMockData, refreshData, isLoading, isSyncing, syncConversations } = usePipelineStore()
   const { theme, toggleTheme } = useTheme()
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
+      <GlobalKeyboardShortcuts />
+      <EmbedBanner />
       {/* Top bar */}
       <header className="flex items-center justify-between border-b border-border px-6 py-3">
         <div className="flex items-center gap-4">

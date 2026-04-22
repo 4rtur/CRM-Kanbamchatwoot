@@ -1,36 +1,63 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CRM Kanban + Chatwoot
 
-## Getting Started
+CRM Kanban integrado ao Chatwoot — "single pane of glass" para agentes.
 
-First, run the development server:
+## Rotas
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+| Rota | Uso |
+|------|-----|
+| `/` | Board Kanban completo (multi-pipeline, filtros, relatórios) |
+| `/embed` | **Visão focada no contato da conversação atual** — destinada ao Dashboard App do Chatwoot, renderiza só o card do contato da conversação aberta |
+| `/settings` | Configuração do Chatwoot (URL, API key, account ID) |
+| `/produtos` | Catálogo de produtos |
+| `/relatorios` | Relatórios do pipeline |
+
+## Configuração do Dashboard App (Chatwoot)
+
+Em **Chatwoot → Settings → Integrations → Dashboard Apps**, crie um app e configure a URL:
+
+```
+https://kanban.cirurgiaoitech.tech/embed
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+> Importante: use `/embed`, **não** a raiz `/`. A raiz carrega o board completo (útil quando aberto em nova aba), enquanto `/embed` renderiza apenas o card do contato da conversação, em layout compacto (~380px) adequado ao sidebar.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+O `/embed` ouve automaticamente os eventos `postMessage` do Chatwoot para detectar o contato e a conversação em contexto, e também aceita `?contact_id=X` / `?conversation_id=Y` como fallback.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Integração de navegação — "single pane of glass"
 
-## Learn More
+### Comportamento dos cards
 
-To learn more about Next.js, take a look at the following resources:
+- **Clique no card** (nome/avatar/corpo): abre a conversação no Chatwoot.
+  - Embutido: navega o iframe pai (via `window.parent.location` ou `postMessage`).
+  - Standalone: abre em nova aba.
+  - Fallback sem `conversation_id`: abre a página do contato.
+- **Ícone de info (i)** no topo do card: abre o painel lateral de edição (stage, labels, checklist, notas, produtos).
+- **Ícone de conversação azul** (`#1F93FF`): indicador visual de que o card é clicável para abrir o Chatwoot.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Atalho de teclado
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Ctrl/Cmd+K**: abre no Chatwoot o card com foco (ou o primeiro da lista filtrada).
+  - Funciona em qualquer rota do app.
+  - Ignorado em inputs/textareas.
 
-## Deploy on Vercel
+### Banner de contexto embutido
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Se o app for carregado dentro do Chatwoot mas na URL raiz (em vez de `/embed`), um banner aparece sugerindo configurar o Dashboard App para `/embed`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Desenvolvimento
+
+```bash
+npm install
+npm run dev      # desenvolvimento
+npm run build    # produção
+npm run lint     # lint
+```
+
+## Arquivos de referência
+
+- `src/lib/dashboard-app.ts` — helpers `isEmbedded()` e `listenToDashboardEvents()`
+- `src/components/kanban/card.tsx` — card com split click (conversação vs. detalhes)
+- `src/components/kanban/card-detail-sheet.tsx` — painel de edição
+- `src/app/embed/page.tsx` — rota compacta para sidebar do Chatwoot
+- `src/app/page.tsx` — board completo + banner + atalho global
