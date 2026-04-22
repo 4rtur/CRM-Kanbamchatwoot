@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import { ArrowLeft, Save, CheckCircle2, AlertCircle, Kanban, Webhook, ToggleLeft, ToggleRight, Server } from 'lucide-react'
+import { ArrowLeft, Save, CheckCircle2, AlertCircle, Kanban, Webhook, ToggleLeft, ToggleRight, Server, UserPlus, ChevronRight } from 'lucide-react'
 import { getChatwootConfig, saveChatwootConfig, fetchServerConfigStatus } from '@/lib/config'
 import type { ServerConfigStatus } from '@/lib/config'
 import {
@@ -285,6 +285,26 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
+
+        <Separator className="my-6" />
+
+        {/* Auto-atribuição de leads */}
+        <section>
+          <div className="flex items-center gap-2">
+            <UserPlus className="size-5 text-[#1F93FF]" />
+            <h2 className="text-lg font-semibold">Auto-atribuição de leads</h2>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Distribui novos leads entre agentes automaticamente em round-robin,
+            conforme regras de horário e dia da semana. Opt-in — desativada por default.
+          </p>
+          <Link href="/atribuicao" className="mt-3 inline-flex">
+            <Button variant="outline" size="sm">
+              Gerenciar regras
+              <ChevronRight className="size-3.5" data-icon="inline-end" />
+            </Button>
+          </Link>
+        </section>
 
         <Separator className="my-6" />
 
