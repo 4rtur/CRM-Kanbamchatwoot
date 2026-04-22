@@ -32,6 +32,7 @@ export async function syncConversationsToCards(
     const card: CrmCard = {
       id: `card-${contact.id}`,
       contactId: contact.id,
+      dealId: null,
       contact,
       pipelineId: pipeline.id,
       stageId: firstStage.id,

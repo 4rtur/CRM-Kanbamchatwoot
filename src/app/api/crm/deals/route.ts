@@ -58,6 +58,8 @@ export async function POST(request: NextRequest): Promise<Response> {
         pipelineId: parsed.data.pipelineId,
         stageId: parsed.data.stageId,
         status: parsed.data.status ?? 'active',
+        priority: parsed.data.priority ?? 'media',
+        assignedAgentId: parsed.data.assignedAgentId ?? null,
         valueEstimated:
           parsed.data.valueEstimated != null ? String(parsed.data.valueEstimated) : null,
         valueClosed: parsed.data.valueClosed != null ? String(parsed.data.valueClosed) : null,

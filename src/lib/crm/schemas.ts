@@ -67,6 +67,7 @@ export const customFieldValueInputSchema = z.object({
 })
 
 export const dealStatusSchema = z.enum(['active', 'won', 'lost'])
+export const dealPrioritySchema = z.enum(['alta', 'media', 'baixa'])
 
 export const dealInputSchema = z.object({
   chatwootContactId: z.number().int().positive(),
@@ -74,12 +75,23 @@ export const dealInputSchema = z.object({
   pipelineId: z.string().min(1),
   stageId: z.string().min(1),
   status: dealStatusSchema.optional(),
+  priority: dealPrioritySchema.optional(),
+  assignedAgentId: z.number().int().positive().optional().nullable(),
   valueEstimated: z.number().nonnegative().optional().nullable(),
   valueClosed: z.number().nonnegative().optional().nullable(),
   score: z.number().int().min(0).max(100).optional(),
 })
 
 export const dealUpdateSchema = dealInputSchema.partial().omit({ chatwootContactId: true })
+
+export const dealProductsInputSchema = z.object({
+  productIds: z.array(z.string().min(1)),
+})
+
+export const pipelineAccessInputSchema = z.object({
+  pipelineId: z.string().min(1),
+  chatwootUserId: z.number().int().positive().nullable(),
+})
 
 export const dealMoveSchema = z.object({
   stageId: z.string().min(1),

@@ -4,6 +4,7 @@ import { pipelines } from './pipelines'
 import { stages } from './stages'
 
 export const dealStatus = pgEnum('deal_status', ['active', 'won', 'lost'])
+export const dealPriority = pgEnum('deal_priority', ['alta', 'media', 'baixa'])
 
 export const deals = pgTable(
   'deals',
@@ -21,6 +22,8 @@ export const deals = pgTable(
       .notNull()
       .references(() => stages.id, { onDelete: 'restrict' }),
     status: dealStatus('status').notNull().default('active'),
+    priority: dealPriority('priority').notNull().default('media'),
+    assignedAgentId: integer('assigned_agent_id'),
     valueEstimated: numeric('value_estimated', { precision: 12, scale: 2 }),
     valueClosed: numeric('value_closed', { precision: 12, scale: 2 }),
     score: integer('score').notNull().default(0),

@@ -58,6 +58,7 @@ function QuickAddForm({
     const card: CrmCard = {
       id: `card-${contactId}`,
       contactId,
+      dealId: null,
       contact: {
         id: contactId,
         name: name.trim(),

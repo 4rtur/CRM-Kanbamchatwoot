@@ -50,6 +50,10 @@ export async function PATCH(request: NextRequest, context: Context): Promise<Res
       patch.valueClosed = parsed.data.valueClosed != null ? String(parsed.data.valueClosed) : null
     }
     if (parsed.data.score !== undefined) patch.score = parsed.data.score
+    if (parsed.data.priority !== undefined) patch.priority = parsed.data.priority
+    if (parsed.data.assignedAgentId !== undefined) {
+      patch.assignedAgentId = parsed.data.assignedAgentId
+    }
     if (parsed.data.chatwootConversationId !== undefined) {
       patch.chatwootConversationId = parsed.data.chatwootConversationId
     }

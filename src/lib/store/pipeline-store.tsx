@@ -65,6 +65,21 @@ import {
   createAutomationInDb,
   updateAutomationInDb,
   deleteAutomationInDb,
+  fetchDealsFromDb,
+  upsertDealInDb,
+  updateDealInDb,
+  setDealProductsInDb,
+  fetchDealProductsFromDb,
+  fetchChecklistFromDb,
+  createChecklistItemInDb,
+  updateChecklistItemInDb,
+  deleteChecklistItemInDb,
+  fetchNotesFromDb,
+  createNoteInDb,
+  fetchPipelineAccessFromDb,
+  grantPipelineAccessInDb,
+  revokePipelineAccessInDb,
+  type DbDealRow,
 } from '@/lib/store/db-persistence'
 import { autoMigrateIfNeeded } from '@/lib/db/migrate-local'
 import {
@@ -81,7 +96,28 @@ const AUTO_MOVE_STORAGE_KEY = 'chatwoot-crm-auto-move'
 const ACCESS_CONTROL_STORAGE_KEY = 'chatwoot-crm-access-control'
 const AUTO_SYNC_ENABLED_KEY = 'chatwoot-crm-auto-sync-enabled'
 const AUTO_ASSIGNMENT_ENABLED_KEY = 'chatwoot-crm-auto-assignment-enabled'
+const CARDS_EXTRA_MIGRATED_KEY = 'chatwoot-crm-cards-migrated-to-deals-v1'
 const AUTO_SYNC_INTERVAL_MS = 30_000
+
+function wasCardsExtraMigrated(): boolean {
+  if (typeof window === 'undefined') return true
+  return localStorage.getItem(CARDS_EXTRA_MIGRATED_KEY) === 'true'
+}
+
+function markCardsExtraMigrated(): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(CARDS_EXTRA_MIGRATED_KEY, 'true')
+}
+
+function archiveCardsExtra(): void {
+  if (typeof window === 'undefined') return
+  const raw = localStorage.getItem(CARDS_EXTRA_STORAGE_KEY)
+  if (raw) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    localStorage.setItem(`${CARDS_EXTRA_STORAGE_KEY}__archived_${stamp}`, raw)
+    localStorage.removeItem(CARDS_EXTRA_STORAGE_KEY)
+  }
+}
 
 interface CardsExtraData {
   [cardId: string]: {
@@ -195,11 +231,6 @@ function loadCardsExtra(): CardsExtraData {
   return {}
 }
 
-function saveCardsExtra(data: CardsExtraData): void {
-  if (typeof window === 'undefined') return
-  localStorage.setItem(CARDS_EXTRA_STORAGE_KEY, JSON.stringify(data))
-}
-
 function loadProducts(): CrmProduct[] {
   if (typeof window === 'undefined') return MOCK_PRODUCTS
   try {
@@ -238,11 +269,6 @@ function loadAccessControl(): AccessControl {
     // fallback
   }
   return {}
-}
-
-function saveAccessControl(data: AccessControl): void {
-  if (typeof window === 'undefined') return
-  localStorage.setItem(ACCESS_CONTROL_STORAGE_KEY, JSON.stringify(data))
 }
 
 function loadAutoSyncEnabled(): boolean {
@@ -313,6 +339,7 @@ function buildMockCards(extraData: CardsExtraData): CrmCard[] {
     const card: CrmCard = {
       id: cardId,
       contactId: contact.id,
+      dealId: null,
       contact,
       pipelineId,
       stageId,
@@ -362,7 +389,13 @@ function resolvePipelineId(rawPipeline: string, pipelines: CrmPipeline[]): strin
   return pipelines[0]?.id || 'vendas'
 }
 
-async function buildLiveCards(contacts: ChatwootContact[], extraData: CardsExtraData, pipelines?: CrmPipeline[]): Promise<CrmCard[]> {
+async function buildLiveCards(
+  contacts: ChatwootContact[],
+  extraData: CardsExtraData,
+  pipelines: CrmPipeline[] | undefined,
+  dealsByKey: Map<string, DbDealRow>,
+  dealProductsByDealId: Map<string, string[]>,
+): Promise<CrmCard[]> {
   const allPipelines = pipelines || loadPipelines()
   return contacts.map((contact) => {
     const rawPipeline = (contact.custom_attributes.crm_pipeline as string) || ''
@@ -373,29 +406,174 @@ async function buildLiveCards(contacts: ChatwootContact[], extraData: CardsExtra
     const cardId = `card-${contact.id}`
     const extra = extraData[cardId]
 
+    // Banco é fonte da verdade. localStorage só complementa onde o deal ainda
+    // não existe (primeiro load antes do upsert).
+    const dealKey = `${contact.id}:${pipelineId}`
+    const deal = dealsByKey.get(dealKey)
+
     const card: CrmCard = {
       id: cardId,
       contactId: contact.id,
+      dealId: deal?.id ?? null,
       contact,
       pipelineId,
-      stageId,
+      stageId: deal?.stageId ?? stageId,
       lastMessage: null,
       lastMessageAt: contact.last_activity_at,
       labels: extra?.labels ?? [],
       assignedAgent: null,
       conversations: [],
       phone: contact.phone_number,
-      priority: extra?.priority ?? 'media',
-      value: extra?.value ?? 0,
+      priority: deal?.priority ?? extra?.priority ?? 'media',
+      value: deal?.valueEstimated != null ? Number(deal.valueEstimated) : extra?.value ?? 0,
       checklist: extra?.checklist ?? [],
       notes: extra?.notes ?? [],
-      products: extra?.products ?? [],
-      score: 0,
+      products: deal ? dealProductsByDealId.get(deal.id) ?? [] : extra?.products ?? [],
+      score: deal?.score ?? 0,
     }
 
     card.score = calculateLeadScore(card)
     return card
   })
+}
+
+// Hidrata banco em background após o primeiro render:
+// 1) Upsert de deals pra cards que ainda não têm um (inclui migração retroativa
+//    dos campos de trabalho que estavam só em localStorage)
+// 2) Fetch de checklist e notes por deal/contato
+// Aplica tudo via setCards sem bloquear o load inicial.
+async function hydrateMissingDealsAndRelations(
+  initialCards: CrmCard[],
+  existingDeals: DbDealRow[],
+  storedExtra: CardsExtraData,
+  setCards: React.Dispatch<React.SetStateAction<CrmCard[]>>,
+): Promise<void> {
+  const needsMigration = !wasCardsExtraMigrated()
+
+  const upsertResults = await Promise.all(
+    initialCards.map(async (card) => {
+      if (card.dealId) return { cardId: card.id, dealId: card.dealId, wasNew: false }
+      try {
+        const extra = storedExtra[card.id]
+        const deal = await upsertDealInDb({
+          chatwootContactId: card.contactId,
+          pipelineId: card.pipelineId,
+          stageId: card.stageId,
+          priority: extra?.priority ?? card.priority,
+          valueEstimated:
+            extra?.value != null && extra.value > 0
+              ? extra.value
+              : card.value > 0
+                ? card.value
+                : null,
+          score: card.score,
+        })
+        return { cardId: card.id, dealId: deal.id, wasNew: true }
+      } catch {
+        return { cardId: card.id, dealId: null as string | null, wasNew: false }
+      }
+    }),
+  )
+
+  const dealIdByCardId = new Map<string, string>()
+  for (const r of upsertResults) {
+    if (r.dealId) dealIdByCardId.set(r.cardId, r.dealId)
+  }
+
+  // Aplica dealIds
+  setCards((prev) =>
+    prev.map((c) => {
+      const dealId = dealIdByCardId.get(c.id) ?? c.dealId
+      return dealId === c.dealId ? c : { ...c, dealId }
+    }),
+  )
+
+  // Migração retroativa — acontece UMA VEZ por browser. Após o primeiro upsert
+  // de cada deal, manda pro banco os products, checklist e notes que estavam
+  // em localStorage pra garantir que nada se perca.
+  if (needsMigration) {
+    await Promise.all(
+      initialCards.map(async (card) => {
+        const dealId = dealIdByCardId.get(card.id) ?? card.dealId
+        const extra = storedExtra[card.id]
+        if (!dealId || !extra) return
+
+        if (extra.products && extra.products.length > 0) {
+          await setDealProductsInDb(dealId, extra.products).catch(() => {})
+        }
+
+        if (extra.checklist && extra.checklist.length > 0) {
+          for (let i = 0; i < extra.checklist.length; i += 1) {
+            const item = extra.checklist[i]
+            await createChecklistItemInDb({
+              dealId,
+              title: item.title,
+              done: item.done,
+              dueDate: item.dueDate,
+              priority: item.priority,
+              assignedTo: item.assignedTo,
+              order: i,
+            }).catch(() => {})
+          }
+        }
+
+        if (extra.notes && extra.notes.length > 0) {
+          for (const note of extra.notes) {
+            await createNoteInDb({
+              chatwootContactId: card.contactId,
+              dealId,
+              text: note.text,
+              author: note.author,
+              type: note.type,
+            }).catch(() => {})
+          }
+        }
+      }),
+    )
+    markCardsExtraMigrated()
+    archiveCardsExtra()
+  }
+
+  // Fetch checklist + notes por card em paralelo (banco é fonte da verdade)
+  const hydration = await Promise.all(
+    initialCards.map(async (card) => {
+      const dealId = dealIdByCardId.get(card.id) ?? card.dealId
+      const [checklistRows, noteRows] = await Promise.all([
+        dealId ? fetchChecklistFromDb(dealId).catch(() => []) : Promise.resolve([]),
+        fetchNotesFromDb(card.contactId).catch(() => []),
+      ])
+
+      const checklist: CrmChecklistItem[] = checklistRows.map((ci) => ({
+        id: ci.id,
+        title: ci.title,
+        done: ci.done,
+        dueDate: ci.dueDate,
+        priority: ci.priority,
+        assignedTo: ci.assignedTo,
+      }))
+
+      const notes: CrmNote[] = noteRows
+        .map((n) => ({
+          id: n.id,
+          text: n.text,
+          author: n.author,
+          timestamp: n.createdAt,
+          type: n.type === 'system' ? ('note' as const) : n.type,
+        }))
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+
+      return { cardId: card.id, checklist, notes }
+    }),
+  )
+
+  const byId = new Map(hydration.map((h) => [h.cardId, h]))
+  setCards((prev) =>
+    prev.map((c) => {
+      const hyd = byId.get(c.id)
+      if (!hyd) return c
+      return { ...c, checklist: hyd.checklist, notes: hyd.notes }
+    }),
+  )
 }
 
 const EMPTY_FILTERS: Filters = {
@@ -480,8 +658,27 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     const storedAutoAssignment = loadAutoAssignmentEnabled()
     setAutoAssignmentEnabledState(storedAutoAssignment)
 
-    const storedAccess = loadAccessControl()
-    setAccessControlState(storedAccess)
+    // Access control vem do banco (pipeline_access). Fallback pra localStorage
+    // só se API falhar — cenário raro que a UI ainda permite operar.
+    try {
+      const rows = await fetchPipelineAccessFromDb()
+      const accessMap: AccessControl = {}
+      for (const r of rows) {
+        const current = accessMap[r.pipelineId]
+        if (r.chatwootUserId === null) {
+          accessMap[r.pipelineId] = { visibleTo: 'all' }
+        } else if (!current || current.visibleTo === 'all') {
+          accessMap[r.pipelineId] = { visibleTo: [r.chatwootUserId] }
+        } else {
+          accessMap[r.pipelineId] = {
+            visibleTo: [...(current.visibleTo as number[]), r.chatwootUserId],
+          }
+        }
+      }
+      setAccessControlState(accessMap)
+    } catch {
+      setAccessControlState(loadAccessControl())
+    }
 
     if (!isConfigured()) {
       setUseMockData(true)
@@ -495,18 +692,51 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
 
     setUseMockData(false)
     try {
-      const [contactsResult, agentsResult, labelsResult, inboxesResult] = await Promise.all([
+      const [contactsResult, agentsResult, labelsResult, inboxesResult, dbDeals] = await Promise.all([
         listContacts(1),
         fetchAgents(),
         fetchLabels(),
         fetchInboxes(),
+        fetchDealsFromDb().catch(() => [] as DbDealRow[]),
       ])
 
-      const liveCards = await buildLiveCards(contactsResult.contacts, storedExtra)
+      // Index deals por (contactId, pipelineId) pra lookup O(1) no build
+      const dealsByKey = new Map<string, DbDealRow>()
+      for (const d of dbDeals) {
+        dealsByKey.set(`${d.chatwootContactId}:${d.pipelineId}`, d)
+      }
+
+      // Busca products vinculados em paralelo por deal (só os que existem)
+      const dealProductsByDealId = new Map<string, string[]>()
+      if (dbDeals.length > 0) {
+        const productsPerDeal = await Promise.all(
+          dbDeals.map((d) =>
+            fetchDealProductsFromDb(d.id)
+              .then((ids) => ({ dealId: d.id, ids }))
+              .catch(() => ({ dealId: d.id, ids: [] as string[] })),
+          ),
+        )
+        for (const { dealId, ids } of productsPerDeal) {
+          dealProductsByDealId.set(dealId, ids)
+        }
+      }
+
+      const liveCards = await buildLiveCards(
+        contactsResult.contacts,
+        storedExtra,
+        resolvedPipelines,
+        dealsByKey,
+        dealProductsByDealId,
+      )
       setCards(liveCards)
       setAgents(agentsResult)
       setLabels(labelsResult)
       setInboxes(inboxesResult)
+
+      // Upsert deals faltantes em background — cada card precisa de um deal
+      // persistido pra suportar escrita de checklist/notes/products.
+      // Migra 1x o localStorage antigo pra banco. Hidrata notes/checklist.
+      void hydrateMissingDealsAndRelations(liveCards, dbDeals, storedExtra, setCards)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro ao carregar dados do Chatwoot'
       setError(message)
@@ -786,39 +1016,29 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
 
   const moveCard = useCallback(
     (cardId: string, toStageId: string) => {
-      let fromStageName = ''
-      let toStageName = ''
-      let pipelineName = ''
+      const cardBefore = cards.find((c) => c.id === cardId)
+      if (!cardBefore || cardBefore.stageId === toStageId) return
 
+      const previousStageId = cardBefore.stageId
+      const note: CrmNote = {
+        id: `note-${Date.now()}`,
+        text: `Movido para etapa: ${toStageId}`,
+        author: 'Sistema',
+        timestamp: new Date().toISOString(),
+        type: 'stage_change',
+      }
+
+      // Optimistic update
       setCards((prev) =>
         prev.map((card) => {
           if (card.id !== cardId) return card
-          if (card.stageId === toStageId) return card
 
-          const previousStageId = card.stageId
-          fromStageName = previousStageId
-          toStageName = toStageId
-          pipelineName = card.pipelineId
-
-          const updated = { ...card, stageId: toStageId }
-
-          const note: CrmNote = {
-            id: `note-${Date.now()}`,
-            text: `Movido para etapa: ${toStageId}`,
-            author: 'Sistema',
-            timestamp: new Date().toISOString(),
-            type: 'stage_change',
+          const updated = {
+            ...card,
+            stageId: toStageId,
+            notes: [...card.notes, note],
           }
-          updated.notes = [...updated.notes, note]
           updated.score = calculateLeadScore(updated)
-
-          const newExtra = { ...cardsExtra }
-          newExtra[cardId] = {
-            ...newExtra[cardId],
-            notes: updated.notes,
-          }
-          setCardsExtra(newExtra)
-          saveCardsExtra(newExtra)
 
           const result = evaluateAutomations(automationRules, {
             card: updated,
@@ -835,49 +1055,54 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
         }),
       )
 
-      // Broadcast para outras abas
       if (!suppressBroadcastRef.current) {
-        broadcastEvent({
-          type: 'card_moved',
-          payload: { cardId, toStageId },
-        })
+        broadcastEvent({ type: 'card_moved', payload: { cardId, toStageId } })
       }
 
-      // Fire webhook
-      const card = cards.find((c) => c.id === cardId)
-      if (card) {
-        fireWebhook({
-          event: 'card.moved',
-          card: {
-            id: card.id,
-            contactId: card.contactId,
-            contactName: card.contact.name,
-            stageId: toStageId,
-          },
-          from_stage: fromStageName,
-          to_stage: toStageName,
-          pipeline: pipelineName,
-          timestamp: new Date().toISOString(),
+      fireWebhook({
+        event: 'card.moved',
+        card: {
+          id: cardBefore.id,
+          contactId: cardBefore.contactId,
+          contactName: cardBefore.contact.name,
+          stageId: toStageId,
+        },
+        from_stage: previousStageId,
+        to_stage: toStageId,
+        pipeline: cardBefore.pipelineId,
+        timestamp: new Date().toISOString(),
+      })
+      showToast(`${cardBefore.contact.name} movido para nova etapa`, 'success')
+
+      if (useMockData) return
+
+      // Persistência: Chatwoot custom_attribute + deal + note no banco
+      updateContactCustomAttributes(cardBefore.contactId, {
+        ...cardBefore.contact.custom_attributes,
+        crm_stage: toStageId,
+      }).catch(() => {
+        setCards((prev) =>
+          prev.map((c) => (c.id === cardId ? { ...c, stageId: previousStageId } : c)),
+        )
+        showToast('Falha ao salvar movimentação no Chatwoot', 'error')
+      })
+
+      if (cardBefore.dealId) {
+        void updateDealInDb(cardBefore.dealId, { stageId: toStageId }).catch(() => {
+          showToast('Falha ao persistir movimentação no banco', 'error')
         })
-
-        showToast(`${card.contact.name} movido para nova etapa`, 'success')
-      }
-
-      if (card && !useMockData) {
-        updateContactCustomAttributes(card.contactId, {
-          ...card.contact.custom_attributes,
-          crm_stage: toStageId,
+        void createNoteInDb({
+          chatwootContactId: cardBefore.contactId,
+          dealId: cardBefore.dealId,
+          text: note.text,
+          author: note.author,
+          type: 'stage_change',
         }).catch(() => {
-          setCards((prev) =>
-            prev.map((c) => {
-              if (c.id !== cardId) return c
-              return { ...c, stageId: card.stageId }
-            }),
-          )
+          // não critical — nota só não persiste no banco
         })
       }
     },
-    [cards, useMockData, cardsExtra, automationRules],
+    [cards, useMockData, automationRules],
   )
 
   const moveCardToPipeline = useCallback(
@@ -915,15 +1140,6 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
         }),
       )
 
-      const newExtra = { ...cardsExtra }
-      const existingNotes = newExtra[cardId]?.notes ?? card.notes
-      newExtra[cardId] = {
-        ...newExtra[cardId],
-        notes: [...existingNotes, note],
-      }
-      setCardsExtra(newExtra)
-      saveCardsExtra(newExtra)
-
       if (!suppressBroadcastRef.current) {
         broadcastEvent({
           type: 'card_pipeline_moved',
@@ -950,31 +1166,48 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
         'success',
       )
 
-      if (!useMockData) {
-        updateContactCustomAttributes(card.contactId, {
-          ...card.contact.custom_attributes,
-          crm_pipeline: toPipelineId,
-          crm_stage: targetStageId,
-        }).catch(() => {
-          // revert on failure
-          setCards((prev) =>
-            prev.map((c) => {
-              if (c.id !== cardId) return c
-              return { ...c, pipelineId: fromPipelineId, stageId: card.stageId }
-            }),
-          )
-        })
+      if (useMockData) return
+
+      updateContactCustomAttributes(card.contactId, {
+        ...card.contact.custom_attributes,
+        crm_pipeline: toPipelineId,
+        crm_stage: targetStageId,
+      }).catch(() => {
+        setCards((prev) =>
+          prev.map((c) => {
+            if (c.id !== cardId) return c
+            return { ...c, pipelineId: fromPipelineId, stageId: card.stageId }
+          }),
+        )
+      })
+
+      // Mudar de pipeline = deal do pipeline antigo fica inativo, upsert no novo.
+      // Mantemos o dealId antigo no card porque é fonte da verdade pra checklist/notes,
+      // mas atualizamos stageId no banco. Se não existir deal no novo pipeline,
+      // será criado no próximo loadData pelo hydrate.
+      if (card.dealId) {
+        void updateDealInDb(card.dealId, {
+          pipelineId: toPipelineId,
+          stageId: targetStageId,
+        }).catch(() => {})
+        void createNoteInDb({
+          chatwootContactId: card.contactId,
+          dealId: card.dealId,
+          text: note.text,
+          author: note.author,
+          type: 'stage_change',
+        }).catch(() => {})
       }
     },
-    [cards, pipelines, cardsExtra, useMockData],
+    [cards, pipelines, useMockData],
   )
 
   const updateCardLabels = useCallback(
     (cardId: string, newLabels: string[]) => {
-      const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], labels: newLabels } }
-      setCardsExtra(newExtra)
-      saveCardsExtra(newExtra)
+      const cardBefore = cards.find((c) => c.id === cardId)
+      if (!cardBefore) return
 
+      // Optimistic update
       setCards((prev) =>
         prev.map((card) => {
           if (card.id !== cardId) return card
@@ -985,105 +1218,177 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       )
 
       if (!suppressBroadcastRef.current) {
-        broadcastEvent({
-          type: 'labels_changed',
-          payload: { cardId, labels: newLabels },
-        })
+        broadcastEvent({ type: 'labels_changed', payload: { cardId, labels: newLabels } })
       }
 
-      const card = cards.find((c) => c.id === cardId)
-      if (card && !useMockData) {
-        apiUpdateContactLabels(card.contactId, newLabels).catch(() => {
-          // revert on failure
-        })
-      }
+      if (useMockData) return
+
+      // Labels persistem no Chatwoot (labels do contato).
+      apiUpdateContactLabels(cardBefore.contactId, newLabels).catch(() => {
+        setCards((prev) =>
+          prev.map((c) => (c.id === cardId ? { ...c, labels: cardBefore.labels } : c)),
+        )
+        showToast('Falha ao salvar labels no Chatwoot', 'error')
+      })
 
       showToast('Labels atualizadas', 'success')
     },
-    [cardsExtra, cards, useMockData],
+    [cards, useMockData],
   )
 
   const updateCardChecklist = useCallback(
     (cardId: string, checklist: CrmChecklistItem[]) => {
-      const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], checklist } }
-      setCardsExtra(newExtra)
-      saveCardsExtra(newExtra)
+      const cardBefore = cards.find((c) => c.id === cardId)
+      if (!cardBefore) return
 
-      if (!suppressBroadcastRef.current) {
-        broadcastEvent({
-          type: 'checklist_updated',
-          payload: { cardId, checklist },
-        })
-      }
+      const previousItems = cardBefore.checklist
+      const previousById = new Map(previousItems.map((i) => [i.id, i]))
 
+      // Optimistic update + automação
       setCards((prev) =>
         prev.map((card) => {
           if (card.id !== cardId) return card
           const updated = { ...card, checklist }
           updated.score = calculateLeadScore(updated)
-
           if (checklist.length > 0 && checklist.every((item) => item.done)) {
             const result = evaluateAutomations(automationRules, { card: updated })
-            if (result?.newStageId) {
-              updated.stageId = result.newStageId
-            }
+            if (result?.newStageId) updated.stageId = result.newStageId
           }
-
           return updated
         }),
       )
+
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({ type: 'checklist_updated', payload: { cardId, checklist } })
+      }
+
+      if (useMockData || !cardBefore.dealId) return
+      const dealId = cardBefore.dealId
+
+      // Diff → create/update/delete no banco
+      const nextIds = new Set(checklist.map((i) => i.id))
+
+      // Deletar removidos
+      const toDelete = previousItems.filter((i) => !nextIds.has(i.id))
+      for (const item of toDelete) {
+        void deleteChecklistItemInDb(item.id).catch(() => {})
+      }
+
+      // Criar/atualizar
+      for (let idx = 0; idx < checklist.length; idx += 1) {
+        const item = checklist[idx]
+        const prev = previousById.get(item.id)
+        if (!prev) {
+          void createChecklistItemInDb({
+            dealId,
+            title: item.title,
+            done: item.done,
+            dueDate: item.dueDate,
+            priority: item.priority,
+            assignedTo: item.assignedTo,
+            order: idx,
+          })
+            .then((saved) => {
+              // Substitui id local pelo id real do banco
+              setCards((prev2) =>
+                prev2.map((c) => {
+                  if (c.id !== cardId) return c
+                  return {
+                    ...c,
+                    checklist: c.checklist.map((ci) =>
+                      ci.id === item.id ? { ...ci, id: saved.id } : ci,
+                    ),
+                  }
+                }),
+              )
+            })
+            .catch(() => {})
+        } else if (
+          prev.title !== item.title ||
+          prev.done !== item.done ||
+          prev.dueDate !== item.dueDate ||
+          prev.priority !== item.priority ||
+          prev.assignedTo !== item.assignedTo
+        ) {
+          void updateChecklistItemInDb(item.id, {
+            title: item.title,
+            done: item.done,
+            dueDate: item.dueDate,
+            priority: item.priority,
+            assignedTo: item.assignedTo,
+            order: idx,
+          }).catch(() => {})
+        }
+      }
     },
-    [cardsExtra, automationRules],
+    [cards, automationRules, useMockData],
   )
 
   const addCardNote = useCallback(
     (cardId: string, note: CrmNote) => {
-      if (!suppressBroadcastRef.current) {
-        broadcastEvent({
-          type: 'note_added',
-          payload: { cardId, note },
-        })
-      }
+      const cardBefore = cards.find((c) => c.id === cardId)
+      if (!cardBefore) return
 
+      // Optimistic
       setCards((prev) =>
         prev.map((card) => {
           if (card.id !== cardId) return card
-          const newNotes = [...card.notes, note]
-          const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], notes: newNotes } }
-          setCardsExtra(newExtra)
-          saveCardsExtra(newExtra)
-          return { ...card, notes: newNotes }
+          return { ...card, notes: [...card.notes, note] }
         }),
       )
+
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({ type: 'note_added', payload: { cardId, note } })
+      }
+
+      if (useMockData) return
+
+      void createNoteInDb({
+        chatwootContactId: cardBefore.contactId,
+        dealId: cardBefore.dealId,
+        text: note.text,
+        author: note.author,
+        type: note.type === 'stage_change' || note.type === 'agent_change' ? note.type : 'note',
+      })
+        .then((saved) => {
+          // Substitui id local pelo id real
+          setCards((prev) =>
+            prev.map((c) => {
+              if (c.id !== cardId) return c
+              return {
+                ...c,
+                notes: c.notes.map((n) => (n.id === note.id ? { ...n, id: saved.id } : n)),
+              }
+            }),
+          )
+        })
+        .catch(() => {
+          setCards((prev) =>
+            prev.map((c) => {
+              if (c.id !== cardId) return c
+              return { ...c, notes: c.notes.filter((n) => n.id !== note.id) }
+            }),
+          )
+          showToast('Falha ao salvar nota', 'error')
+        })
     },
-    [cardsExtra],
+    [cards, useMockData],
   )
 
   const updateCardProducts = useCallback(
     (cardId: string, productIds: string[]) => {
+      const cardBefore = cards.find((c) => c.id === cardId)
+      if (!cardBefore) return
+
       const productsTotal = productIds.reduce((sum, id) => {
         const product = products.find((p) => p.id === id)
         return sum + (product?.price ?? 0)
       }, 0)
 
-      const newExtra = {
-        ...cardsExtra,
-        [cardId]: {
-          ...cardsExtra[cardId],
-          products: productIds,
-          value: productsTotal,
-        },
-      }
-      setCardsExtra(newExtra)
-      saveCardsExtra(newExtra)
+      const previousProducts = cardBefore.products
+      const previousValue = cardBefore.value
 
-      if (!suppressBroadcastRef.current) {
-        broadcastEvent({
-          type: 'products_changed',
-          payload: { cardId, productIds },
-        })
-      }
-
+      // Optimistic
       setCards((prev) =>
         prev.map((card) => {
           if (card.id !== cardId) return card
@@ -1092,54 +1397,82 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
           return updated
         }),
       )
+
+      if (!suppressBroadcastRef.current) {
+        broadcastEvent({ type: 'products_changed', payload: { cardId, productIds } })
+      }
+
+      if (useMockData || !cardBefore.dealId) return
+      const dealId = cardBefore.dealId
+
+      // Persiste em paralelo: vinculação de produtos + value recalculado
+      Promise.all([
+        setDealProductsInDb(dealId, productIds),
+        updateDealInDb(dealId, {
+          valueEstimated: productsTotal > 0 ? productsTotal : null,
+        }),
+      ]).catch(() => {
+        setCards((prev) =>
+          prev.map((c) =>
+            c.id === cardId ? { ...c, products: previousProducts, value: previousValue } : c,
+          ),
+        )
+        showToast('Falha ao salvar produtos do lead', 'error')
+      })
     },
-    [cardsExtra, products],
+    [cards, products, useMockData],
   )
 
   const updateCardPriority = useCallback(
     (cardId: string, priority: CrmCard['priority']) => {
-      const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], priority } }
-      setCardsExtra(newExtra)
-      saveCardsExtra(newExtra)
+      const cardBefore = cards.find((c) => c.id === cardId)
+      if (!cardBefore) return
+
+      const previousPriority = cardBefore.priority
+      setCards((prev) =>
+        prev.map((card) => (card.id === cardId ? { ...card, priority } : card)),
+      )
 
       if (!suppressBroadcastRef.current) {
-        broadcastEvent({
-          type: 'priority_changed',
-          payload: { cardId, priority },
-        })
+        broadcastEvent({ type: 'priority_changed', payload: { cardId, priority } })
       }
 
-      setCards((prev) =>
-        prev.map((card) => {
-          if (card.id !== cardId) return card
-          return { ...card, priority }
-        }),
-      )
+      if (useMockData || !cardBefore.dealId) return
+      void updateDealInDb(cardBefore.dealId, { priority }).catch(() => {
+        setCards((prev) =>
+          prev.map((c) => (c.id === cardId ? { ...c, priority: previousPriority } : c)),
+        )
+        showToast('Falha ao salvar prioridade', 'error')
+      })
     },
-    [cardsExtra],
+    [cards, useMockData],
   )
 
   const updateCardValue = useCallback(
     (cardId: string, value: number) => {
-      const newExtra = { ...cardsExtra, [cardId]: { ...cardsExtra[cardId], value } }
-      setCardsExtra(newExtra)
-      saveCardsExtra(newExtra)
+      const cardBefore = cards.find((c) => c.id === cardId)
+      if (!cardBefore) return
+
+      const previousValue = cardBefore.value
+      setCards((prev) =>
+        prev.map((card) => (card.id === cardId ? { ...card, value } : card)),
+      )
 
       if (!suppressBroadcastRef.current) {
-        broadcastEvent({
-          type: 'value_changed',
-          payload: { cardId, value },
-        })
+        broadcastEvent({ type: 'value_changed', payload: { cardId, value } })
       }
 
-      setCards((prev) =>
-        prev.map((card) => {
-          if (card.id !== cardId) return card
-          return { ...card, value }
-        }),
-      )
+      if (useMockData || !cardBefore.dealId) return
+      void updateDealInDb(cardBefore.dealId, {
+        valueEstimated: value > 0 ? value : null,
+      }).catch(() => {
+        setCards((prev) =>
+          prev.map((c) => (c.id === cardId ? { ...c, value: previousValue } : c)),
+        )
+        showToast('Falha ao salvar valor', 'error')
+      })
     },
-    [cardsExtra],
+    [cards, useMockData],
   )
 
   const addCard = useCallback(
@@ -1147,34 +1480,33 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       setCards((prev) => [...prev, card])
 
       if (!suppressBroadcastRef.current) {
-        broadcastEvent({
-          type: 'card_added',
-          payload: { card },
-        })
+        broadcastEvent({ type: 'card_added', payload: { card } })
       }
-
-      const newExtra = {
-        ...cardsExtra,
-        [card.id]: {
-          labels: card.labels,
-          priority: card.priority,
-          value: card.value,
-          notes: card.notes,
-          checklist: card.checklist,
-          products: card.products,
-        },
-      }
-      setCardsExtra(newExtra)
-      saveCardsExtra(newExtra)
 
       if (!useMockData) {
-        apiCreateContact({
+        // Criar contato no Chatwoot e upsert deal no banco em paralelo.
+        void apiCreateContact({
           name: card.contact.name,
           email: card.contact.email ?? undefined,
           phone_number: card.contact.phone_number ?? undefined,
-        }).catch(() => {
-          // silently fail
+        }).catch(() => {})
+
+        void upsertDealInDb({
+          chatwootContactId: card.contactId,
+          pipelineId: card.pipelineId,
+          stageId: card.stageId,
+          priority: card.priority,
+          valueEstimated: card.value > 0 ? card.value : null,
+          score: card.score,
         })
+          .then((deal) => {
+            setCards((prev) =>
+              prev.map((c) => (c.id === card.id ? { ...c, dealId: deal.id } : c)),
+            )
+          })
+          .catch(() => {
+            showToast('Falha ao persistir deal — dados podem não sincronizar', 'error')
+          })
       }
 
       showToast(`Lead "${card.contact.name}" adicionado`, 'success')
@@ -1207,11 +1539,41 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
 
   const setAccessControlFn = useCallback(
     (pipelineId: string, visibleTo: 'all' | number[]) => {
+      const previous = accessControl
       const next = { ...accessControl, [pipelineId]: { visibleTo } }
       setAccessControlState(next)
-      saveAccessControl(next)
+
+      if (useMockData) return
+
+      // Reconcilia com o banco: apaga regras atuais do pipeline e reinsere conforme visibleTo.
+      void (async () => {
+        try {
+          const prevVisible = previous[pipelineId]?.visibleTo ?? 'all'
+
+          // Remove as regras anteriores que não estão na nova config
+          if (prevVisible === 'all') {
+            await revokePipelineAccessInDb(pipelineId, null)
+          } else {
+            await Promise.all(
+              prevVisible.map((userId) => revokePipelineAccessInDb(pipelineId, userId)),
+            )
+          }
+
+          // Adiciona novas regras
+          if (visibleTo === 'all') {
+            await grantPipelineAccessInDb(pipelineId, null)
+          } else {
+            await Promise.all(
+              visibleTo.map((userId) => grantPipelineAccessInDb(pipelineId, userId)),
+            )
+          }
+        } catch {
+          setAccessControlState(previous)
+          showToast('Falha ao salvar controle de acesso', 'error')
+        }
+      })()
     },
-    [accessControl],
+    [accessControl, useMockData],
   )
 
   const syncConversations = useCallback(async (options?: { silent?: boolean }): Promise<number> => {

@@ -202,3 +202,216 @@ export async function updateAutomationInDb(rule: CrmAutomationRule): Promise<voi
 export async function deleteAutomationInDb(id: string): Promise<void> {
   await apiFetch(`/api/crm/automations/${id}`, { method: 'DELETE' })
 }
+
+// ============================================================================
+// Deals (persistência dos campos de trabalho do card)
+// ============================================================================
+
+export interface DbDealRow {
+  id: string
+  tenantId: string
+  chatwootContactId: number
+  chatwootConversationId: number | null
+  pipelineId: string
+  stageId: string
+  status: 'active' | 'won' | 'lost'
+  priority: 'alta' | 'media' | 'baixa'
+  assignedAgentId: number | null
+  valueEstimated: string | null
+  valueClosed: string | null
+  score: number
+  createdAt: string
+  updatedAt: string
+  closedAt: string | null
+}
+
+export async function fetchDealsFromDb(): Promise<DbDealRow[]> {
+  return apiFetch<DbDealRow[]>('/api/crm/deals')
+}
+
+export async function upsertDealInDb(input: {
+  chatwootContactId: number
+  pipelineId: string
+  stageId: string
+  priority?: 'alta' | 'media' | 'baixa'
+  valueEstimated?: number | null
+  assignedAgentId?: number | null
+  score?: number
+}): Promise<DbDealRow> {
+  return apiFetch<DbDealRow>('/api/crm/deals/upsert', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export async function updateDealInDb(
+  dealId: string,
+  patch: Partial<{
+    stageId: string
+    pipelineId: string
+    priority: 'alta' | 'media' | 'baixa'
+    valueEstimated: number | null
+    assignedAgentId: number | null
+    score: number
+    status: 'active' | 'won' | 'lost'
+    chatwootConversationId: number | null
+  }>,
+): Promise<DbDealRow> {
+  return apiFetch<DbDealRow>(`/api/crm/deals/${dealId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
+export async function setDealProductsInDb(
+  dealId: string,
+  productIds: string[],
+): Promise<void> {
+  await apiFetch(`/api/crm/deals/${dealId}/products`, {
+    method: 'PUT',
+    body: JSON.stringify({ productIds }),
+  })
+}
+
+export async function fetchDealProductsFromDb(dealId: string): Promise<string[]> {
+  return apiFetch<string[]>(`/api/crm/deals/${dealId}/products`)
+}
+
+// ============================================================================
+// Checklist items
+// ============================================================================
+
+export interface DbChecklistItemRow {
+  id: string
+  tenantId: string
+  dealId: string
+  title: string
+  done: boolean
+  dueDate: string | null
+  priority: 'alta' | 'media' | 'baixa'
+  assignedTo: string | null
+  order: number
+  createdAt: string
+  updatedAt: string
+}
+
+export async function fetchChecklistFromDb(dealId: string): Promise<DbChecklistItemRow[]> {
+  return apiFetch<DbChecklistItemRow[]>(`/api/crm/checklists?dealId=${encodeURIComponent(dealId)}`)
+}
+
+export async function createChecklistItemInDb(input: {
+  dealId: string
+  title: string
+  done?: boolean
+  dueDate?: string | null
+  priority?: 'alta' | 'media' | 'baixa'
+  assignedTo?: string | null
+  order?: number
+}): Promise<DbChecklistItemRow> {
+  return apiFetch<DbChecklistItemRow>('/api/crm/checklists', {
+    method: 'POST',
+    body: JSON.stringify({
+      dealId: input.dealId,
+      title: input.title,
+      done: input.done ?? false,
+      dueDate: input.dueDate ?? null,
+      priority: input.priority ?? 'media',
+      assignedTo: input.assignedTo ?? null,
+      order: input.order ?? 0,
+    }),
+  })
+}
+
+export async function updateChecklistItemInDb(
+  id: string,
+  patch: Partial<{
+    title: string
+    done: boolean
+    dueDate: string | null
+    priority: 'alta' | 'media' | 'baixa'
+    assignedTo: string | null
+    order: number
+  }>,
+): Promise<DbChecklistItemRow> {
+  return apiFetch<DbChecklistItemRow>(`/api/crm/checklists/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
+export async function deleteChecklistItemInDb(id: string): Promise<void> {
+  await apiFetch(`/api/crm/checklists/${id}`, { method: 'DELETE' })
+}
+
+// ============================================================================
+// Notes
+// ============================================================================
+
+export interface DbNoteRow {
+  id: string
+  tenantId: string
+  chatwootContactId: number
+  dealId: string | null
+  text: string
+  author: string
+  type: 'note' | 'stage_change' | 'agent_change' | 'system'
+  createdAt: string
+}
+
+export async function fetchNotesFromDb(contactId: number): Promise<DbNoteRow[]> {
+  return apiFetch<DbNoteRow[]>(`/api/crm/notes?contactId=${contactId}`)
+}
+
+export async function createNoteInDb(input: {
+  chatwootContactId: number
+  dealId?: string | null
+  text: string
+  author: string
+  type?: 'note' | 'stage_change' | 'agent_change' | 'system'
+}): Promise<DbNoteRow> {
+  return apiFetch<DbNoteRow>('/api/crm/notes', {
+    method: 'POST',
+    body: JSON.stringify({
+      chatwootContactId: input.chatwootContactId,
+      dealId: input.dealId ?? null,
+      text: input.text,
+      author: input.author,
+      type: input.type ?? 'note',
+    }),
+  })
+}
+
+// ============================================================================
+// Pipeline access
+// ============================================================================
+
+export interface DbPipelineAccessRow {
+  id: string
+  tenantId: string
+  pipelineId: string
+  chatwootUserId: number | null
+  createdAt: string
+}
+
+export async function fetchPipelineAccessFromDb(): Promise<DbPipelineAccessRow[]> {
+  return apiFetch<DbPipelineAccessRow[]>('/api/crm/pipeline-access')
+}
+
+export async function grantPipelineAccessInDb(
+  pipelineId: string,
+  chatwootUserId: number | null,
+): Promise<void> {
+  await apiFetch('/api/crm/pipeline-access', {
+    method: 'POST',
+    body: JSON.stringify({ pipelineId, chatwootUserId }),
+  })
+}
+
+export async function revokePipelineAccessInDb(
+  pipelineId: string,
+  chatwootUserId: number | null,
+): Promise<void> {
+  const params = new URLSearchParams({ pipelineId })
+  if (chatwootUserId !== null) params.set('chatwootUserId', String(chatwootUserId))
+  await apiFetch(`/api/crm/pipeline-access?${params}`, { method: 'DELETE' })
+}

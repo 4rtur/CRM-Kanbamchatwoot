@@ -157,6 +157,11 @@ export interface CrmProduct {
 export interface CrmCard {
   id: string
   contactId: number
+  // Identificador persistido no banco (tabela deals). Fonte da verdade para
+  // value, priority, stage, products vinculados, checklist e notes. Fica null
+  // momentaneamente antes do upsert inicial — nesse estado a UI reflete apenas
+  // dados do Chatwoot até o deal ser hidratado.
+  dealId: string | null
   contact: ChatwootContact
   pipelineId: string
   stageId: string
