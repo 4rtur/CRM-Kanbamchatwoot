@@ -77,6 +77,8 @@ const CARDS_EXTRA_STORAGE_KEY = 'chatwoot-crm-cards-extra'
 const PRODUCTS_STORAGE_KEY = 'chatwoot-crm-products'
 const AUTO_MOVE_STORAGE_KEY = 'chatwoot-crm-auto-move'
 const ACCESS_CONTROL_STORAGE_KEY = 'chatwoot-crm-access-control'
+const AUTO_SYNC_ENABLED_KEY = 'chatwoot-crm-auto-sync-enabled'
+const AUTO_SYNC_INTERVAL_MS = 30_000
 
 interface CardsExtraData {
   [cardId: string]: {
@@ -117,6 +119,7 @@ interface PipelineStore {
   error: string | null
   useMockData: boolean
   autoMoveEnabled: boolean
+  autoSyncEnabled: boolean
   accessControl: AccessControl
 
   setActivePipeline: (id: string) => void
@@ -142,8 +145,9 @@ interface PipelineStore {
   deleteAutomationRule: (id: string) => void
   addCard: (card: CrmCard) => void
   setAutoMoveEnabled: (enabled: boolean) => void
+  setAutoSyncEnabled: (enabled: boolean) => void
   setAccessControl: (pipelineId: string, visibleTo: 'all' | number[]) => void
-  syncConversations: () => Promise<number>
+  syncConversations: (options?: { silent?: boolean }) => Promise<number>
 
   activePipeline: CrmPipeline | undefined
   filteredCards: CrmCard[]
@@ -233,6 +237,19 @@ function loadAccessControl(): AccessControl {
 function saveAccessControl(data: AccessControl): void {
   if (typeof window === 'undefined') return
   localStorage.setItem(ACCESS_CONTROL_STORAGE_KEY, JSON.stringify(data))
+}
+
+function loadAutoSyncEnabled(): boolean {
+  if (typeof window === 'undefined') return true
+  const stored = localStorage.getItem(AUTO_SYNC_ENABLED_KEY)
+  // default: true (ativo por padrão)
+  if (stored === null) return true
+  return stored === 'true'
+}
+
+function saveAutoSyncEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(AUTO_SYNC_ENABLED_KEY, String(enabled))
 }
 
 function buildMockCards(extraData: CardsExtraData): CrmCard[] {
@@ -357,6 +374,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
   const [useMockData, setUseMockData] = useState(true)
   const [cardsExtra, setCardsExtra] = useState<CardsExtraData>({})
   const [autoMoveEnabled, setAutoMoveEnabledState] = useState(false)
+  const [autoSyncEnabled, setAutoSyncEnabledState] = useState(true)
   const [accessControl, setAccessControlState] = useState<AccessControl>({})
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false)
   const [lastRealtimeEventAt, setLastRealtimeEventAt] = useState<number | null>(null)
@@ -403,6 +421,9 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
 
     const storedAutoMove = loadAutoMove()
     setAutoMoveEnabledState(storedAutoMove)
+
+    const storedAutoSync = loadAutoSyncEnabled()
+    setAutoSyncEnabledState(storedAutoSync)
 
     const storedAccess = loadAccessControl()
     setAccessControlState(storedAccess)
@@ -636,6 +657,37 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
 
     return cleanup
   }, [loadData])
+
+  // Auto-sync: poll Chatwoot periodicamente (não bloqueante)
+  // Cleanup: clear interval when disabled or component unmounts
+  useEffect(() => {
+    if (useMockData) return
+    if (!autoSyncEnabled) return
+    if (typeof window === 'undefined') return
+
+    const intervalId = setInterval(() => {
+      // Chamada silenciosa: só mostra toast se houver novos leads
+      void (async () => {
+        if (useMockData) return
+        try {
+          const { syncConversationsToCards } = await import('@/lib/chatwoot/sync')
+          const pipeline = pipelines.find((p) => p.id === activePipelineId)
+          if (!pipeline) return
+          const result = await syncConversationsToCards(pipeline, cards)
+          if (result.newCards.length > 0) {
+            setCards((prev) => [...prev, ...result.newCards])
+            showToast(`${result.totalImported} novo(s) lead(s) recebido(s)`, 'success')
+          }
+        } catch {
+          // silencioso — não polui a UI com erros de polling
+        }
+      })()
+    }, AUTO_SYNC_INTERVAL_MS)
+
+    return () => {
+      clearInterval(intervalId)
+    }
+  }, [autoSyncEnabled, useMockData, pipelines, activePipelineId, cards])
 
   const setActivePipeline = useCallback((id: string) => {
     setActivePipelineId(id)
@@ -1067,9 +1119,13 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     [accessControl],
   )
 
-  const syncConversations = useCallback(async (): Promise<number> => {
+  const syncConversations = useCallback(async (options?: { silent?: boolean }): Promise<number> => {
+    const silent = options?.silent ?? false
+
     if (useMockData) {
-      showToast('Sincronização disponível apenas com Chatwoot conectado', 'info')
+      if (!silent) {
+        showToast('Sincronização disponível apenas com Chatwoot conectado', 'info')
+      }
       return 0
     }
 
@@ -1085,20 +1141,35 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       const result = await syncConversationsToCards(pipeline, cards)
       if (result.newCards.length > 0) {
         setCards((prev) => [...prev, ...result.newCards])
-        showToast(`${result.totalImported} novo(s) lead(s) importado(s)`, 'success')
-      } else {
+        if (silent) {
+          showToast(`${result.totalImported} novo(s) lead(s) recebido(s)`, 'success')
+        } else {
+          showToast(`${result.totalImported} novo(s) lead(s) importado(s)`, 'success')
+        }
+      } else if (!silent) {
         showToast('Nenhum novo lead encontrado', 'info')
       }
 
       return result.totalImported
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Erro ao sincronizar'
-      showToast(message, 'error')
+      if (!silent) {
+        const message = err instanceof Error ? err.message : 'Erro ao sincronizar'
+        showToast(message, 'error')
+      }
       return 0
     } finally {
       setIsSyncing(false)
     }
   }, [useMockData, pipelines, activePipelineId, cards])
+
+  const setAutoSyncEnabled = useCallback((enabled: boolean) => {
+    setAutoSyncEnabledState(enabled)
+    saveAutoSyncEnabled(enabled)
+    showToast(
+      enabled ? 'Auto-sync ativado' : 'Auto-sync pausado',
+      enabled ? 'success' : 'info',
+    )
+  }, [])
 
   const addProduct = useCallback((product: CrmProduct) => {
     const previous = products
@@ -1256,6 +1327,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       error,
       useMockData,
       autoMoveEnabled,
+      autoSyncEnabled,
       accessControl,
       chatwootUrl,
       chatwootAccountId,
@@ -1282,6 +1354,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       deleteAutomationRule,
       addCard,
       setAutoMoveEnabled,
+      setAutoSyncEnabled,
       setAccessControl: setAccessControlFn,
       syncConversations,
       activePipeline,
@@ -1304,6 +1377,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       error,
       useMockData,
       autoMoveEnabled,
+      autoSyncEnabled,
       accessControl,
       chatwootUrl,
       chatwootAccountId,
@@ -1330,6 +1404,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       deleteAutomationRule,
       addCard,
       setAutoMoveEnabled,
+      setAutoSyncEnabled,
       setAccessControlFn,
       syncConversations,
       activePipeline,

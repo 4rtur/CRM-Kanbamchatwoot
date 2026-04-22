@@ -14,6 +14,16 @@
  *    para /api/events, mantendo a mesma interface de RealtimeEvent
  * 5. Adicionar autenticação (token no header ou query param)
  *
+ * Integração com webhook do Chatwoot (substituir o auto-polling):
+ * 1. Criar endpoint POST /api/chatwoot/webhook que recebe os eventos
+ *    "conversation_created" e "message_created" do Chatwoot.
+ * 2. Validar o token/segredo do webhook no header.
+ * 3. Publicar o evento no pub/sub com payload { type: 'new_conversation', conversation }.
+ * 4. Este handler (GET /api/events) assina o canal e envia via SSE para os
+ *    navegadores conectados.
+ * 5. No cliente, ao receber "new_conversation", criar um card na primeira
+ *    etapa do pipeline ativo — eliminando a necessidade de polling a cada 30s.
+ *
  * Exemplo de uso no cliente:
  *   const source = new EventSource('/api/events')
  *   source.onmessage = (e) => {

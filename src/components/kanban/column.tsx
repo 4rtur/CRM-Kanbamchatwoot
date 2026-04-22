@@ -171,6 +171,14 @@ export function KanbanColumn({ stage, cards, onCardClick }: KanbanColumnProps) {
   }
 
   const cardIds = cards.map((c) => c.id)
+  const totalValue = cards.reduce((sum, c) => sum + (c.value || 0), 0)
+
+  function formatStageValue(value: number): string {
+    if (value >= 1000) {
+      return `R$ ${(value / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}k`
+    }
+    return `R$ ${value.toLocaleString('pt-BR')}`
+  }
 
   if (isCollapsed) {
     return (
@@ -218,7 +226,14 @@ export function KanbanColumn({ stage, cards, onCardClick }: KanbanColumnProps) {
           className="size-2.5 rounded-full shadow-sm"
           style={{ backgroundColor: stage.color }}
         />
-        <h3 className="text-sm font-semibold text-foreground">{stage.name}</h3>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <h3 className="truncate text-sm font-semibold text-foreground">{stage.name}</h3>
+          {totalValue > 0 && (
+            <span className="text-[10px] font-medium leading-tight text-emerald-600 dark:text-emerald-400">
+              {formatStageValue(totalValue)}
+            </span>
+          )}
+        </div>
         <span className="ml-auto flex size-5 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground">
           {cards.length}
         </span>

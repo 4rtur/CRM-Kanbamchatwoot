@@ -57,6 +57,44 @@ function RealtimeIndicator() {
   )
 }
 
+function AutoSyncIndicator() {
+  const { autoSyncEnabled, setAutoSyncEnabled, useMockData } = usePipelineStore()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted) return null
+  if (useMockData) return null
+
+  const active = autoSyncEnabled
+
+  return (
+    <button
+      type="button"
+      onClick={() => setAutoSyncEnabled(!active)}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-medium transition-all duration-200 ${
+        active
+          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400'
+          : 'border-zinc-500/30 bg-zinc-500/10 text-zinc-500 hover:bg-zinc-500/20 dark:text-zinc-400'
+      }`}
+      title={
+        active
+          ? 'Auto-sync ativo — novos leads do Chatwoot aparecem automaticamente. Clique para pausar.'
+          : 'Auto-sync pausado — clique para ativar a sincronização automática de novos leads.'
+      }
+    >
+      <span
+        className={`inline-block size-1.5 rounded-full ${
+          active ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-zinc-400'
+        }`}
+      />
+      {active ? 'Auto-sync ativo' : 'Auto-sync pausado'}
+    </button>
+  )
+}
+
 function EmbedBanner() {
   const [dismissed, setDismissed] = useState(false)
   const [show, setShow] = useState(false)
@@ -155,6 +193,7 @@ function CrmApp() {
             </div>
           </div>
           <RealtimeIndicator />
+          <AutoSyncIndicator />
           {useMockData && (
             <span className="inline-flex items-center rounded-full border border-yellow-500/30 bg-yellow-500/10 px-2.5 py-0.5 text-[10px] font-medium text-yellow-400">
               Dados de demonstração

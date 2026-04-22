@@ -1,11 +1,11 @@
 'use client'
 
 import { usePipelineStore } from '@/lib/store/pipeline-store'
-import { Users, TrendingUp, Clock } from 'lucide-react'
+import { Users, TrendingUp, Clock, DollarSign } from 'lucide-react'
 
 function formatCurrency(value: number): string {
   if (value >= 1000) {
-    return `R$ ${(value / 1000).toFixed(1)}k`
+    return `R$ ${(value / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}k`
   }
   return `R$ ${value.toLocaleString('pt-BR')}`
 }
@@ -35,41 +35,13 @@ export function PipelineStats() {
       )
     : 0
 
-  const stageValues = stages.map((stage) => {
-    const stageCards = pipelineCards.filter((c) => c.stageId === stage.id)
-    const value = stageCards.reduce((sum, c) => sum + c.value, 0)
-    return { stage, value }
-  })
-
   const pipelineValue = pipelineCards
     .filter((c) => !lastStage || c.stageId !== lastStage.id)
-    .reduce((sum, c) => sum + c.value, 0)
+    .reduce((sum, c) => sum + (c.value || 0), 0)
 
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}>
-      {/* Per-stage values */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem' }}>
-        {stageValues.map((sv, i) => (
-          <div
-            key={sv.stage.id}
-            className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-card px-2.5 py-1"
-          >
-            <div
-              className="size-2 shrink-0 rounded-full"
-              style={{ backgroundColor: sv.stage.color }}
-            />
-            <span className="text-[10px] text-muted-foreground whitespace-nowrap">{sv.stage.name}:</span>
-            <span className="text-xs font-semibold whitespace-nowrap" style={{ color: sv.stage.color }}>
-              {formatCurrency(sv.value)}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* Separator */}
-      <div className="h-5 w-px bg-border/50 mx-1 hidden sm:block" />
-
-      {/* Summary stats */}
+      {/* Aggregate stats only — per-stage values are shown in each column header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <div className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-card px-2.5 py-1">
           <Users className="size-3 text-blue-400" />
@@ -84,12 +56,13 @@ export function PipelineStats() {
         <div className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-card px-2.5 py-1">
           <Clock className="size-3 text-yellow-400" />
           <span className="text-xs font-semibold text-foreground">{avgDays}d</span>
-          <span className="text-[10px] text-muted-foreground">média</span>
+          <span className="text-[10px] text-muted-foreground">tempo médio</span>
         </div>
         {pipelineValue > 0 && (
-          <div className="flex items-center gap-1.5 px-2 py-1">
-            <span className="text-[10px] text-muted-foreground">Pipeline:</span>
-            <span className="text-[10px] text-muted-foreground font-medium">{formatCurrency(pipelineValue)}</span>
+          <div className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-1">
+            <DollarSign className="size-3 text-emerald-500 dark:text-emerald-400" />
+            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">{formatCurrency(pipelineValue)}</span>
+            <span className="text-[10px] text-muted-foreground">em aberto</span>
           </div>
         )}
       </div>

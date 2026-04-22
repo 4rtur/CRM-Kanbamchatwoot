@@ -288,6 +288,29 @@ export default function SettingsPage() {
 
         <Separator className="my-6" />
 
+        {/* Auto-sync explanation */}
+        <section>
+          <h3 className="text-sm font-semibold">Auto-sync do Chatwoot</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Quando ativado, o CRM consulta o Chatwoot a cada 30 segundos para trazer
+            novos leads automaticamente. Conversas recém-chegadas via WhatsApp aparecem
+            na primeira etapa do pipeline ativo (ex.: &ldquo;Novo Lead&rdquo;) sem precisar
+            clicar em &ldquo;Sincronizar&rdquo;. O polling é silencioso — só exibe notificação
+            quando novos leads chegam.
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Use o indicador no topo da tela para ativar ou pausar o auto-sync. O estado
+            é salvo no navegador (<code className="rounded bg-muted px-1 py-0.5 text-[11px]">chatwoot-crm-auto-sync-enabled</code>).
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            <strong>Futuro:</strong> o endpoint <code className="rounded bg-muted px-1 py-0.5 text-[11px]">/api/events</code> (SSE)
+            receberá eventos do Chatwoot via webhook e empurrará para o navegador em
+            tempo real, eliminando o polling.
+          </p>
+        </section>
+
+        <Separator className="my-6" />
+
         {/* Environment variables */}
         {!isServerMode && (
           <section>
