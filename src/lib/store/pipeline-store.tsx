@@ -36,7 +36,7 @@ import {
   getMockValue,
   getMockProducts,
 } from '@/lib/chatwoot/mock-data'
-import { isConfigured, getChatwootConfig } from '@/lib/config'
+import { isConfigured, getChatwootConfig, fetchServerConfigStatus } from '@/lib/config'
 import {
   listContacts,
   listAgents as fetchAgents,
@@ -680,7 +680,21 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       setAccessControlState(loadAccessControl())
     }
 
-    if (!isConfigured()) {
+    // Credenciais podem vir de 3 fontes: (1) localStorage do browser,
+    // (2) env vars do servidor (proxy server-side), (3) sessão Chatwoot SSO
+    // (token pessoal no cookie). isConfigured() só vê (1). Se não houver (1),
+    // consultamos /api/config pra descobrir se o servidor resolve.
+    let hasCredentials = isConfigured()
+    if (!hasCredentials) {
+      try {
+        const serverStatus = await fetchServerConfigStatus()
+        hasCredentials = serverStatus.serverConfigured
+      } catch {
+        hasCredentials = false
+      }
+    }
+
+    if (!hasCredentials) {
       setUseMockData(true)
       setCards(buildMockCards(storedExtra))
       setAgents(MOCK_AGENTS)
